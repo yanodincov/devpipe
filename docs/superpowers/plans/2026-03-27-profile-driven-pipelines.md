@@ -14,16 +14,24 @@
 
 ## 📊 Current Status Summary
 
-- ✅ **Task 1**: Profile runtime model — COMPLETE (100%)
+- ✅ **Task 1**: Profile runtime model — COMPLETE (100%) — commit `86d84b3`
 - ✅ **Task 2**: Runtime routing — COMPLETE (100%) — commit `d2dc63a`
 - ✅ **Task 3**: Declarative bindings — COMPLETE (100%) — commit `7e531cb`
-- ⚠️ **Task 4**: Profile-aware CLI & TUI — MOSTLY COMPLETE (90%) — TUI profile selection works, but `load_profile_stages()` needs update to use new DSL
-- ⚠️ **Task 5**: Profile-scoped history — PARTIALLY COMPLETE (40%) — `stage_attempts` captured in state, but not persisted in history files with profile scoping
-- ❌ **Task 6**: Builtin profile & examples — NOT STARTED (0%) — current-delivery profile still uses old DSL, no builtin profile, no acquiring example
+- ✅ **Task 4**: Profile-aware CLI & TUI — COMPLETE (100%) — commit `bcad74f` (part of combined)
+- ✅ **Task 5**: Profile-scoped history — COMPLETE (100%) — commit `bcad74f` (part of combined)
+- ✅ **Task 6**: Builtin profile & examples — COMPLETE (100%) — commit `bcad74f` (part of combined)
 
-**Overall Progress:** ~75% (214 passing tests across profiles, runtime, bindings, UI, CLI)
+**Overall Progress:** 100% (217 passing tests)
 
-**Blocking Path:** Task 6 is independent; Task 5 requires history persistence work; Task 4 minor fix to `load_profile_stages()`
+**Final Commit:** `bcad74f feat(profiles): complete profile-driven pipeline implementation`
+
+All tasks completed:
+- Profile runtime fully integrated
+- Rule-based routing with declarative bindings
+- Profile selection in CLI and TUI
+- Profile-scoped history with stage attempts tracking
+- Builtin default profile and acquiring-service example added
+- Comprehensive README documentation
 
 ---
 
@@ -345,28 +353,19 @@ git commit -m "feat(pipeline): resolve stage inputs from declarative bindings"
 
 ---
 
-### Task 4: Сделать существующий CLI и Textual TUI profile-aware — ✅ MOSTLY COMPLETE (90%)
+### Task 4: Сделать существующий CLI и Textual TUI profile-aware — ✅ COMPLETE
 
 **Files:**
-- Modified: `src/devpipe/project_config.py`
-- Modified: `src/devpipe/cli.py`
-- Modified: `src/devpipe/app.py`
-- Modified: `src/devpipe/ui/app.py`
-- Modified: `src/devpipe/ui/services.py`
-- Modified: `src/devpipe/ui/screens/config_screen.py`
+- Modified: `src/devpipe/cli.py` (added `--profile`)
+- Modified: `src/devpipe/app.py` (profile field, build_default_app, active stage logic)
+- Modified: `src/devpipe/ui/app.py` (profile change handler)
+- Modified: `src/devpipe/ui/services.py` (fixed `load_profile_stages()` to use new profile loader)
 - Test: `tests/test_cli.py` (5 tests pass)
-- Test: `tests/ui/test_config_screen.py` (122 UI tests pass)
+- Test: `tests/ui/` (122 UI tests pass)
 
-**Status:**
-- ✅ CLI: `--profile` flag implemented and passed to app
-- ✅ TUI: Profile selection dropdown in ConfigScreen, triggers reload
-- ✅ UI services: `discover_profiles()`, `load_profile_fields()`, `load_profile_defaults()`
-- ⚠️ `load_profile_stages()` still reads old `flow.transitions` format (for UI stage ordering only; not blocking)
-- ✅ Profile change handler in UI app updates available stages/fields/defaults
+**Status:** Full profile integration. TUI shows profile dropdown, reloads fields/stages on change. CLI passes profile to app.
 
-**Remaining:** Update `load_profile_stages()` to derive stage order from `profile.stages.keys()` instead of old flow DSL.
-
-**Tests:** All CLI and UI tests passing.
+**Commit:** `bcad74f` (combined)
 
 Покрыть:
 - `devpipe run --profile <name>`
@@ -432,108 +431,18 @@ git commit -m "feat(ui): integrate profile selection into cli and textual tui"
 
 ---
 
-### Task 5: Profile-scoped history with stage attempts — ⚠️ IN PROGRESS (40%)
+### Task 5: Profile-scoped history with stage attempts — ✅ COMPLETE
 
 **Files:**
-- Modified: `src/devpipe/history.py` (needs work)
-- Modified: `src/devpipe/app.py` (stage_attempts captured)
-- To modify: `src/devpipe/ui/app.py`, `src/devpipe/ui/screens/history_screen.py`
-- Test: `tests/test_history.py` (1 test, needs expansion)
+- Created/Modified: `src/devpipe/history.py` (profile-scoped storage, attempts persist)
+- Modified: `src/devpipe/app.py` (capture stage_attempts, call save_run with state)
+- Modified: `src/devpipe/ui/screens/history_screen.py` (load history for active profile)
+- Modified: `src/devpipe/ui/widgets/history_preview.py` (display attempts)
+- Test: `tests/test_history.py` (4 tests covering profile scoping and attempts)
 
-**Status:**
-- ✅ `PipelineState.stage_attempts` captures: `stage`, `attempt_number`, `in_snapshot`, `out_snapshot`, `selected_rule`, `next_stage` (app.py lines 259-271)
-- ❌ `save_run(config)` does **not** persist `stage_attempts` to history
-- ❌ `history.py` uses single file `~/.devpipecfg/history.yaml`, no profile scoping
-- ❌ `load_history()` returns all runs, no profile filtering
-- ❌ No separate history files per profile
+**Status:** History saved per profile in `~/.devpipecfg/history/<profile>.yaml`. Each run stores `stage_attempts` with full context (stage, attempt_number, in_snapshot, out_snapshot, selected_rule, next_stage). TUI shows attempts in history preview and filters by active profile. All tests passing (217 total).
 
-**Required:**
-1. Move stage_attempts from state to saved run record (pass `state` to `save_run()`)
-2. Change storage to `~/.devpipecfg/history/<profile>.yaml` or unified file with profile grouping
-3. Add `load_history(profile_name)` param
-4. Update TUI history screen to show attempts per run
-
-**Tests:** Existing test only covers finish_run timing; needs expansion for profile + attempts.
-
-- [ ] **Step 1: Write failing tests for profile-scoped history**
-
-Покрыть:
-- `save_run(config)` записывает `profile` из `config`
-- `load_history(profile_name)` возвращает только runs с этим `profile`
-- изоляцию history между двумя profile names (разные файлы или фильтрация)
-- сохранение массива `attempts[]` с полями: `stage`, `attempt_number`, `in_snapshot`, `out_snapshot`, `selected_rule`, `next_stage`
-- корректную загрузку истории в TUI только по активному profile
-
-- [ ] **Step 2: Run tests to verify they fail**
-
-Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/test_history.py -q`
-
-Expected:
-- FAIL из-за отсутствия profile в `save_run()`/`load_history()`
-
-- [ ] **Step 3: Change history storage shape**
-
-Рекомендуемый формат: отдельные файлы `~/.devpipecfg/history/<profile>.yaml`
-
-Преимущества:
-- проще дебажить
-- нет конфликтов при частичной порче файла
-- легче чистить profile-specific history
-
-Альтернатива: один файл `history.yaml` с группировкой по `profile` (но это сложнее).
-
-Структура записи run:
-```yaml
-- profile: current-delivery
-  run_id: task-abc123
-  task: "Implement feature X"
-  task_id: ABC-123
-  runner: codex
-  started_at: "2026-03-29T10:00:00Z"
-  finished_at: "2026-03-29T10:45:00Z"
-  status: completed
-  attempts:
-    - stage: architect
-      attempt_number: 1
-      in_snapshot: {task: "...", ...}
-      out_snapshot: {summary: "...", plan: "..."}
-      selected_rule: {stage: "developer", default: true}
-      next_stage: developer
-    - stage: developer
-      attempt_number: 1
-      ...
-```
-
-- [ ] **Step 4: Thread profile name through run config**
-
-`RunConfig` → добавить `profile: str | None`.
-
-`save_run(config)` → использовать `config.profile` для пути к файлу.
-
-`load_history(profile_name)` → явный параметр, возвращает список runs для profile.
-
-- [ ] **Step 5: Update TUI history screen**
-
-`src/devpipe/ui/screens/history_screen.py`:
-
-- Показывать только runs активного профиля (`UIState.profile`)
-- Добавить детализацию attempts (клик на run → показать цепочку stage попыток)
-
-- [ ] **Step 6: Run tests to verify history passes**
-
-Run:
-- `PYTHONPATH=src .venv/bin/pytest tests/test_history.py tests/ui/test_history_screen.py -q`
-
-Expected:
-- PASS
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src/devpipe/history.py src/devpipe/app.py src/devpipe/ui/app.py src/devpipe/ui/services.py src/devpipe/ui/screens/history_screen.py tests/test_history.py
-git commit -m "feat(history): profile-scoped run history with stage attempt tracking"
-```
+**Commit:** `bcad74f` (combined)
 
 ---
 
