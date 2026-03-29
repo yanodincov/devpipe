@@ -37,53 +37,69 @@ def _task_id_from_branch(branch: str) -> str:
 
 
 def discover_profiles(project_root: Path | None = None) -> list[str]:
-    """Find available profile names from .devpipe/profiles/."""
-    root = project_root or Path.cwd()
-    profiles_dir = root / ".devpipe" / "profiles"
-    if not profiles_dir.exists():
-        return []
-    return sorted(p.name for p in profiles_dir.iterdir() if p.is_dir())
+    """Find available profile names from .devpipe/profiles/ (local and global)."""
+    from devpipe.profiles.loader import find_project_root
+    from pathlib import Path
+
+    # Determine starting directory
+    start_dir = project_root or Path.cwd()
+    # Find actual project root (directory containing .devpipe/)
+    root = find_project_root(start_dir) or start_dir
+
+    profiles: set[str] = set()
+
+    # Local project profiles in .devpipe/profiles/
+    local_dir = root / ".devpipe" / "profiles"
+    if local_dir.exists():
+        for p in local_dir.iterdir():
+            if p.is_dir() and _has_pipeline_file(p):
+                profiles.add(p.name)
+
+    # Global profiles in ~/.devpipe/profiles/
+    global_dir = Path.home() / ".devpipe" / "profiles"
+    if global_dir.exists() and global_dir != local_dir:
+        for p in global_dir.iterdir():
+            if p.is_dir() and _has_pipeline_file(p):
+                profiles.add(p.name)
+
+    return sorted(profiles)
+
+
+def _has_pipeline_file(profile_dir: Path) -> bool:
+    """Check if profile directory contains pipeline.yaml or pipeline.yml."""
+    return (profile_dir / "pipeline.yaml").exists() or (profile_dir / "pipeline.yml").exists()
 
 
 def load_profile_defaults(profile_name: str, project_root: Path | None = None) -> dict[str, Any]:
     """Load default values from a profile's pipeline.yml."""
-    root = project_root or Path.cwd()
-    pipeline_path = root / ".devpipe" / "profiles" / profile_name / "pipeline.yml"
-    if not pipeline_path.exists():
+    from devpipe.profiles.loader import load_profile, find_project_root
+
+    # Resolve effective project root for builtin/global fallback
+    start = project_root if project_root is not None else Path.cwd()
+    effective_root = find_project_root(start) or start
+
+    try:
+        profile = load_profile(profile_name, project_root=effective_root)
+        defaults = dict(profile.defaults)
+        defaults.setdefault("runner", "auto")
+        return defaults
+    except Exception:
         return {}
-    data = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
-    defaults = dict(data.get("defaults", {}))
-
-    # Set runner default
-    defaults.setdefault("runner", "auto")
-
-    return defaults
 
 
 def load_profile_stages(profile_name: str, project_root: Path | None = None) -> list[str]:
-    """Extract ordered stage list from profile's flow definition."""
-    root = project_root or Path.cwd()
-    pipeline_path = root / ".devpipe" / "profiles" / profile_name / "pipeline.yml"
-    if not pipeline_path.exists():
+    """Extract ordered stage list from profile's routing spec."""
+    from devpipe.profiles.loader import load_profile, find_project_root
+
+    # Resolve effective project root
+    start = project_root if project_root is not None else Path.cwd()
+    effective_root = find_project_root(start) or start
+
+    try:
+        profile = load_profile(profile_name, project_root=effective_root)
+        return _get_stage_order_from_routing(profile.routing, profile.stages)
+    except Exception:
         return []
-    data = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
-
-    flow = data.get("flow", {})
-    transitions = flow.get("transitions", {})
-    start = flow.get("start")
-    if not start or not transitions:
-        return list(data.get("roles", {}).keys())
-
-    # Walk the flow graph to get ordered stages
-    ordered: list[str] = []
-    current = start
-    visited: set[str] = set()
-    while current and current not in {"completed", "failed"} and current not in visited:
-        visited.add(current)
-        ordered.append(current)
-        trans = transitions.get(current, {})
-        current = trans.get("on_success")
-    return ordered
 
 
 # Keys managed in the Standard section; exclude from Custom
@@ -258,38 +274,17 @@ def load_profile_fields(profile_name: str, project_root: Path | None = None) -> 
     Inputs from pipeline.yml become Custom fields.
     Standard fields (profile, task, runner, first_role, last_role) are excluded.
     """
-    root = project_root or Path.cwd()
-    pipeline_path = root / ".devpipe" / "profiles" / profile_name / "pipeline.yml"
-    if not pipeline_path.exists():
+    from devpipe.profiles.loader import load_profile, find_project_root
+
+    # Resolve effective project root
+    start = project_root if project_root is not None else Path.cwd()
+    effective_root = find_project_root(start) or start
+
+    try:
+        profile = load_profile(profile_name, project_root=effective_root)
+        return _convert_inputs_to_fields(profile.inputs)
+    except Exception:
         return []
-    data = yaml.safe_load(pipeline_path.read_text(encoding="utf-8")) or {}
-
-    inputs = data.get("inputs", {})
-    fields: list[FieldMeta] = []
-    for name, spec in inputs.items():
-        # Skip inputs already handled in the Standard nav section
-        if name in _STANDARD_KEYS:
-            continue
-
-        input_type = spec.get("type", "string")
-        required = spec.get("required", False)
-        default = spec.get("default", "")
-        options = spec.get("options", [])
-        description = spec.get("description", "")
-
-        kind = _type_to_kind(input_type, options)
-
-        fields.append(FieldMeta(
-            key=name,
-            label=_key_to_label(name),
-            kind=kind,
-            required=required,
-            options=[str(o) for o in options],
-            default=default,
-            description=description,
-            section="custom",
-        ))
-    return fields
 
 
 def _type_to_kind(type_str: str, options: list) -> FieldKind:
@@ -315,8 +310,11 @@ def _key_to_label(key: str) -> str:
 
 def load_default_profile(project_root: Path | None = None) -> str:
     """Read the default profile from .devpipe/config.yaml."""
-    root = project_root or Path.cwd()
-    config_path = root / ".devpipe" / "config.yaml"
+    from devpipe.profiles.loader import find_project_root
+
+    start = project_root if project_root is not None else Path.cwd()
+    effective_root = find_project_root(start) or start
+    config_path = effective_root / ".devpipe" / "config.yaml"
     if not config_path.exists():
         return ""
     data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
@@ -329,22 +327,37 @@ def prepare_initial_state(project_root: Path | None = None) -> dict[str, Any]:
     Returns a dict with keys: profile, available_profiles, available_stages,
     fields, defaults.
     """
-    root = project_root or Path.cwd()
+    from devpipe.profiles.loader import find_project_root
+
+    start = project_root if project_root is not None else Path.cwd()
+    root = find_project_root(start) or start
 
     profiles = discover_profiles(root)
     default_profile = load_default_profile(root)
-    if default_profile not in profiles and profiles:
-        default_profile = profiles[0]
+
+    # If default profile is not in available list, adjust:
+    # - if there are available profiles, pick the first one
+    # - if no profiles available, clear default_profile (ignore config)
+    if default_profile not in profiles:
+        if profiles:
+            default_profile = profiles[0]
+        else:
+            default_profile = ""
 
     if default_profile:
         fields = load_profile_fields(default_profile, root)
         stages = load_profile_stages(default_profile, root)
         defaults = load_profile_defaults(default_profile, root)
     else:
-        legacy_state = resolve_legacy_form_state(root)
-        fields = legacy_state["fields"]
-        defaults = legacy_state["defaults"]
-        stages = legacy_state["available_stages"]
+        # No profile configured and no profiles available
+        fields = []
+        stages = []
+        defaults = {}
+
+    # Ensure standard defaults for runner/model/effort
+    defaults.setdefault("runner", "auto")
+    defaults.setdefault("model", "auto")
+    defaults.setdefault("effort", "auto")
 
     # Auto-populate task_id from git branch
     branch = _git_branch(root)
@@ -360,3 +373,78 @@ def prepare_initial_state(project_root: Path | None = None) -> dict[str, Any]:
         "fields": fields,
         "defaults": defaults,
     }
+
+
+# Helper functions for new-format (routing) profiles
+
+def _get_stage_order_from_routing(routing, stages) -> list[str]:
+    """Extract a linear ordered list of stages from routing spec by following default transitions."""
+    start = routing.start_stage
+    by_stage = routing.by_stage
+    ordered: list[str] = []
+    visited: set[str] = set()
+    current = start
+    while current and current not in {"completed", "failed"} and current not in visited:
+        visited.add(current)
+        ordered.append(current)
+        stage_routing = by_stage.get(current)
+        if not stage_routing:
+            break
+        # Find default rule
+        default_rule = None
+        for rule in stage_routing.next_stages:
+            if rule.default:
+                default_rule = rule
+                break
+        if default_rule is None:
+            # No default rule; pick first rule if any
+            if stage_routing.next_stages:
+                default_rule = stage_routing.next_stages[0]
+            else:
+                break
+        current = default_rule.stage
+    return ordered
+
+
+def _convert_inputs_to_fields(inputs: dict[str, Any]) -> list[FieldMeta]:
+    """Convert InputSpec objects (from loader) to FieldMeta list for UI."""
+    fields: list[FieldMeta] = []
+    for key, spec in inputs.items():
+        if key in _STANDARD_KEYS:
+            continue
+        # spec is InputSpec; extract attributes
+        type_str = spec.type.value
+        default = spec.default
+        values = spec.values
+        options = values or []
+        multi = spec.multi
+        # InputSpec doesn't have 'required' or 'description'
+        required = False
+        description = ""
+
+        # Determine kind
+        if multi:
+            kind = FieldKind.MULTI_SELECT
+        elif options:
+            kind = FieldKind.SELECT
+        else:
+            type_map = {
+                "string": FieldKind.STRING,
+                "int": FieldKind.INT,
+                "bool": FieldKind.STRING,  # Boolean as string toggle
+                "array": FieldKind.ARRAY,
+                "object": FieldKind.OBJECT,
+            }
+            kind = type_map.get(type_str, FieldKind.STRING)
+
+        fields.append(FieldMeta(
+            key=key,
+            label=_key_to_label(key),
+            kind=kind,
+            required=required,
+            options=[str(o) for o in options],
+            default=default,
+            description=description,
+            section="custom",
+        ))
+    return fields

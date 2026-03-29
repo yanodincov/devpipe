@@ -5,60 +5,28 @@ from devpipe.ui.services import prepare_initial_state, resolve_legacy_form_state
 from devpipe.ui.state import FieldKind
 
 
-def test_prepare_initial_state_falls_back_to_legacy_project_config(tmp_path):
+def test_prepare_initial_state_without_profiles_returns_empty(tmp_path):
+    """Test that without .devpipe/profiles/, state has no profile or stages."""
     devpipe_dir = tmp_path / ".devpipe"
-    (devpipe_dir / "tags" / "acquiring-service" / "qa_stand").mkdir(parents=True)
+    devpipe_dir.mkdir()
+    # Config may specify a default profile, but if no profiles dir exists, no profile is active
     (devpipe_dir / "config.yaml").write_text(
-        """
-defaults:
-  runner: codex
-  service: acquiring
-  tags:
-    - acquiring-service
-  dataset:
-    - s4-3ds
-available:
-  target_branch:
-    - release1
-  namespace:
-    - u1
-""".strip(),
-        encoding="utf-8",
-    )
-    (devpipe_dir / "tags" / "acquiring-service" / "qa_stand" / "params.yaml").write_text(
-        """
-params:
-  - key: dataset
-    description: Test dataset
-    required: true
-    multi: true
-    available:
-      - s4-3ds
-""".strip(),
+        "defaults:\n  profile: test-simple",
         encoding="utf-8",
     )
 
     data = prepare_initial_state(tmp_path)
 
+    # No local profiles dir => no profile active, empty available profiles and stages
     assert data["profile"] == ""
     assert data["available_profiles"] == []
-    assert data["available_stages"] == STAGE_ORDER
-    assert data["defaults"]["runner"] == "codex"
-    assert data["defaults"]["service"] == "acquiring"
-    assert data["defaults"]["tags"] == ["acquiring-service"]
-    assert data["defaults"]["dataset"] == ["s4-3ds"]
+    assert data["available_stages"] == []
+    # Defaults should contain standard auto values
+    assert data["defaults"]["runner"] == "auto"
     assert data["defaults"]["model"] == "auto"
     assert data["defaults"]["effort"] == "auto"
-
-    fields_by_key = {field.key: field for field in data["fields"]}
-    assert fields_by_key["target_branch"].kind == FieldKind.SELECT
-    assert fields_by_key["target_branch"].options == ["release1"]
-    assert fields_by_key["namespace"].kind == FieldKind.SELECT
-    assert fields_by_key["namespace"].options == ["u1"]
-    assert fields_by_key["tags"].kind == FieldKind.MULTI_SELECT
-    assert "acquiring-service" in fields_by_key["tags"].options
-    assert fields_by_key["dataset"].kind == FieldKind.MULTI_SELECT
-    assert fields_by_key["dataset"].required is True
+    # No custom fields from profile
+    assert data["fields"] == []
 
 
 def test_legacy_fields_follow_selected_stage_range(tmp_path):

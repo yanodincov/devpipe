@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "required": ["passed", "defects"],
+  "properties": {
+    "passed": { "type": "boolean" },
+    "defects": { "type": "integer" }
+  }
+}

@@ -1,0 +1,41 @@
+version: 1
+name: test-simple
+
+defaults:
+  runner: auto
+  model: middle
+  effort: middle
+
+inputs:
+  message:
+    type: string
+    default: "Hello from test-simple profile!"
+    custom: true
+  count:
+    type: int
+    default: 1
+    custom: false
+    values: [1, 2, 3]
+
+stages:
+  echo:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    in:
+      msg: input.message
+      iterations: input.count
+    out:
+      response:
+        type: string
+      iterations_completed:
+        type: int
+
+routing:
+  start_stage: echo
+  by_stage:
+    echo:
+      next_stages:
+        - stage: completed
+          default: true

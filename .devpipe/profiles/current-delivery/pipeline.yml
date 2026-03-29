@@ -10,159 +10,152 @@ inputs:
   task:
     type: string
     required: true
+    default: ""
+    custom: true
   task_id:
     type: string
     required: false
+    default: ""
+    custom: true
   target_branch:
     type: string
     required: false
+    default: ""
+    custom: true
   namespace:
     type: string
     required: false
+    default: ""
+    custom: true
   service:
     type: string
     required: false
+    default: ""
+    custom: true
   tags:
     type: array
     required: false
     default: []
+    multi: true
+    custom: true
   extra_params:
     type: object
     required: false
     default: {}
+    custom: true
 
-roles:
+stages:
   architect:
     runner: codex
     model: medium
     effort: medium
     retry_limit: 2
-    agent:
-      prompt: agents/architect/prompt.md
-      output_schema: agents/architect/output.schema.json
-    requires:
-      - input.task
-    consumes:
+    in:
       task: input.task
       jira: integration.jira.issue
       shared_context: context.shared
-    produces:
-      architecture_plan: output.architecture_plan
+    out:
+      architecture_plan:
+        type: object
 
   developer:
     runner: codex
     model: high
     effort: middle
     retry_limit: 2
-    agent:
-      prompt: agents/developer/prompt.md
-      output_schema: agents/developer/output.schema.json
-    requires:
-      - input.task
-      - role.architect.output.architecture_plan
-    consumes:
+    in:
       task: input.task
-      architecture_plan: role.architect.output.architecture_plan
+      architecture_plan: stage.architect.out.architecture_plan
       shared_context: context.shared
-    produces:
-      code_changes: output.code_changes
+    out:
+      code_changes:
+        type: object
 
   test_developer:
     runner: codex
     model: middle
     effort: high
     retry_limit: 2
-    agent:
-      prompt: agents/test_developer/prompt.md
-      output_schema: agents/test_developer/output.schema.json
-    requires:
-      - input.task
-      - role.developer.output.code_changes
-    consumes:
+    in:
       task: input.task
-      code_changes: role.developer.output.code_changes
+      code_changes: stage.developer.out.code_changes
       shared_context: context.shared
-    produces:
-      tests: output.tests
+    out:
+      tests:
+        type: object
 
   qa_local:
     runner: codex
     model: middle
     effort: middle
     retry_limit: 2
-    agent:
-      prompt: agents/qa_local/prompt.md
-      output_schema: agents/qa_local/output.schema.json
-    requires:
-      - input.task
-      - role.test_developer.output.tests
-      - role.developer.output.code_changes
-    consumes:
+    in:
       task: input.task
-      tests: role.test_developer.output.tests
-      code_changes: role.developer.output.code_changes
+      tests: stage.test_developer.out.tests
+      code_changes: stage.developer.out.code_changes
       shared_context: context.shared
-    produces:
-      qa_report: output.qa_report
+    out:
+      qa_report:
+        type: object
 
   release:
     runner: codex
     model: low
     effort: low
     retry_limit: 1
-    agent:
-      prompt: agents/release/prompt.md
-      output_schema: agents/release/output.schema.json
-    requires:
-      - role.qa_local.output.qa_report
-      - input.target_branch
-      - input.namespace
-      - input.service
-    consumes:
-      qa_report: role.qa_local.output.qa_report
+    in:
+      qa_report: stage.qa_local.out.qa_report
+      target_branch: input.target_branch
+      namespace: input.namespace
+      service: input.service
+      extra_params: input.extra_params
+      shared_context: context.shared
+      # runtime bindings
       release_inputs.branch: runtime.git.current_branch
       release_inputs.target_branch: input.target_branch
       release_inputs.namespace: input.namespace
       release_inputs.service: input.service
       release_inputs.extra_params: input.extra_params
-      shared_context: context.shared
-    produces:
-      release_metadata: output.release_metadata
+    out:
+      release_metadata:
+        type: object
 
   qa_stand:
     runner: codex
     model: middle
     effort: middle
     retry_limit: 1
-    agent:
-      prompt: agents/qa_stand/prompt.md
-      output_schema: agents/qa_stand/output.schema.json
-    requires:
-      - role.release.output.release_metadata
-    consumes:
-      release_metadata: role.release.output.release_metadata
+    in:
+      release_metadata: stage.release.out.release_metadata
       shared_context: context.shared
-    produces:
-      stand_verification: output.stand_verification
+    out:
+      stand_verification:
+        type: object
 
-flow:
-  start: architect
-  transitions:
+routing:
+  start_stage: architect
+  by_stage:
     architect:
-      on_success: developer
-      on_failure: failed
+      next_stages:
+        - stage: developer
+          default: true
     developer:
-      on_success: test_developer
-      on_failure: failed
+      next_stages:
+        - stage: test_developer
+          default: true
     test_developer:
-      on_success: qa_local
-      on_failure: failed
+      next_stages:
+        - stage: qa_local
+          default: true
     qa_local:
-      on_success: release
-      on_failure: failed
+      next_stages:
+        - stage: release
+          default: true
     release:
-      on_success: qa_stand
-      on_failure: failed
+      next_stages:
+        - stage: qa_stand
+          default: true
     qa_stand:
-      on_success: completed
-      on_failure: failed
+      next_stages:
+        - stage: completed
+          default: true
