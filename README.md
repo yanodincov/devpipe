@@ -25,8 +25,8 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ## Запуск
 
 ```bash
-devpipe          # интерактивное TUI — основной режим
-devpipe run ...  # без TUI, все параметры флагами — для скриптов и CI
+devpipe          # интерактивное TUI — основной и единственный режим
+mise run         # то же самое, если настроен mise
 ```
 
 ---
@@ -55,20 +55,6 @@ devpipe run ...  # без TUI, все параметры флагами — дл
 
 ---
 
-## Частичный запуск
-
-Например, только разработка без деплоя:
-
-```
-Set last role → developer
-```
-
-Или через CLI:
-```bash
-devpipe run --task "..." --runner codex --last-role developer
-```
-
----
 
 ## Настройка проекта (.devpipe/)
 
@@ -209,37 +195,6 @@ available:
     - acquiring-u1-1
     - acquiring-u1-4
 ```
-
----
-
-## devpipe run (без TUI)
-
-Для скриптов и CI — все параметры передаются флагами напрямую:
-
-```bash
-devpipe run \
-  --task "Описание задачи" \
-  --task-id MRC-123 \
-  --runner codex \
-  --target-branch u1 \
-  --service acquiring \
-  --tag acquiring-service,go \
-  --param dataset=s4-3ds \
-  --last-role qa_stand
-```
-
-| Флаг | Описание |
-|------|---------|
-| `--task` | Текст задачи (обязательный) |
-| `--task-id` | ID в Jira (опционально, включает загрузку контекста) |
-| `--runner` | `codex` или `claude` |
-| `--target-branch` | Стенд / ветка деплоя |
-| `--service` | Имя сервиса |
-| `--namespace` | Kubernetes namespace for the `release` stage |
-| `--tag` | Теги через запятую |
-| `--param` | Параметр тега: `key=value`, можно несколько |
-| `--first-role` | С какой роли начать |
-| `--last-role` | На какой остановиться |
 
 ---
 

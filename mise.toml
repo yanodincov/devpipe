@@ -16,6 +16,6 @@ run = ".venv/bin/pytest"
 description = "Run test suite including live codex/claude CLI checks"
 run = ".venv/bin/pytest --run-live-runners"
 
-[tasks.roles]
-description = "List available roles"
-run = ".venv/bin/python -m devpipe inspect --roles-dir roles"
+[tasks.run]
+description = "Launch devpipe TUI"
+run = ".venv/bin/python -m devpipe"
