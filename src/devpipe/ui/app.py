@@ -110,6 +110,8 @@ class DevpipeTextualApp(App):
     def on_config_screen_profile_changed(self, event: ConfigScreen.ProfileChanged) -> None:
         """Reload fields and stages for new profile."""
         from devpipe.ui.services import _build_routing_graph
+        from devpipe.profiles.validator import validate_profile, format_validation_errors
+        from devpipe.profiles.loader import find_project_root
 
         profile = event.profile
         profile_errors: list[str] = []
@@ -117,6 +119,15 @@ class DevpipeTextualApp(App):
         stages = []
         fields = []
         defaults = {}
+        
+        # Validate profile first
+        project_root = find_project_root()
+        profile_dir = project_root / ".devpipe" / "profiles" / profile if project_root else None
+        if profile_dir and profile_dir.exists():
+            validation_result = validate_profile(profile_dir)
+            if not validation_result.valid:
+                profile_errors.extend(format_validation_errors(validation_result.errors))
+        
         try:
             fields = load_profile_fields(profile, self._project_root)
             stages = load_profile_stages(profile, self._project_root)

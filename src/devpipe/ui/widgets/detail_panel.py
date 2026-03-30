@@ -118,7 +118,7 @@ class DetailPanel(Widget):
         # If profile has errors, show only errors (no task snapshot)
         if form.profile_errors:
             lines.append("")
-            lines.append("[bold white on red]  PROFILE ERRORS  [/bold white on red]")
+            lines.append(f"[bold white on red]  PROFILE ERRORS: {form.profile}  [/bold white on red]")
             lines.append("")
             for error in form.profile_errors:
                 # Escape brackets to prevent Textual markup parsing
