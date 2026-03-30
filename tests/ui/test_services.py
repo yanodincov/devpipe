@@ -66,8 +66,9 @@ params:
 
     qa_local_keys = {field.key for field in qa_local_state["fields"]}
     qa_stand_keys = {field.key for field in qa_stand_state["fields"]}
-    assert "dataset" not in qa_local_keys
-    assert "dataset" in qa_stand_keys
+    # Tag params via params.yaml are deprecated - fields come from pipeline.yml only
+    assert "tags" in qa_local_keys
+    assert "tags" in qa_stand_keys
 
 
 def test_legacy_fields_follow_selected_stage_range_from_developer_to_qa_local(tmp_path):
@@ -83,25 +84,14 @@ defaults:
 """.strip(),
         encoding="utf-8",
     )
-    (devpipe_dir / "tags" / "acquiring-service" / "qa_stand" / "params.yaml").write_text(
-        """
-params:
-  - key: dataset
-    description: Test dataset
-    required: true
-    multi: true
-    available:
-      - s4-3ds
-""".strip(),
-        encoding="utf-8",
-    )
 
     state = resolve_legacy_form_state(
         tmp_path,
         {"tags": ["acquiring-service"], "first_role": "developer", "last_role": "qa_local"},
     )
 
-    assert "dataset" not in {field.key for field in state["fields"]}
+    # Tag params via params.yaml are deprecated - fields come from pipeline.yml only
+    assert "tags" in {field.key for field in state["fields"]}
 
 
 def test_legacy_fields_before_qa_local_keep_only_task_id(tmp_path):

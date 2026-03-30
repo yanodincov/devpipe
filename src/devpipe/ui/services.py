@@ -14,7 +14,7 @@ import yaml
 
 from devpipe.project_config import load_project_config
 from devpipe.runtime.state import STAGE_ORDER
-from devpipe.tags import collect_params, load_available_tags, load_tag_definitions
+from devpipe.tags import load_available_tags, load_tag_definitions
 from devpipe.ui.state import FieldKind, FieldMeta
 from devpipe.profiles.loader import ProfileDefinition, _find_pipeline_path
 from devpipe.profiles.stages import InputType
@@ -219,28 +219,9 @@ def _legacy_fields_and_defaults(project_root: Path, current_values: dict[str, An
                 section="custom",
             ),
         )
-
-    tag_defs = load_tag_definitions(selected_tags, project_root)
-    for _tag_name, param, available, default in collect_params(tag_defs, project_cfg.tag_params, active_roles):
-        project_default = defaults.get(param.key)
-        if project_default is None and not param.multi and default:
-            defaults[param.key] = default
-            project_default = default
-        _append_field(
-            fields,
-            seen,
-            FieldMeta(
-                key=param.key,
-                label=_key_to_label(param.key),
-                kind=_infer_kind(project_default, available, multi=param.multi),
-                required=param.required,
-                options=[str(v) for v in available],
-                default=project_default if project_default is not None else ([] if param.multi else ""),
-                description=param.description,
-                section="custom",
-            ),
-        )
-
+    
+    # Tag params via params.yaml are deprecated - all inputs are in pipeline.yml
+    # Add dynamic fields from project config that aren't already in profile
     dynamic_keys = (set(project_cfg.defaults) | set(project_cfg.available)) - seen - _LEGACY_TOP_LEVEL_KEYS
     for key in sorted(dynamic_keys):
         available = [str(v) for v in project_cfg.available_list(key)]
@@ -627,16 +608,15 @@ def _get_stage_order_from_routing(routing, stages) -> list[str]:
     return ordered
 
 
-def _normalize_tag_roles_defaults(tags_value: Any, available_tags: dict[str, Any]) -> dict[str, list[str]]:
-    """Normalize tags default value to dict format: {tag: [roles]}."""
+def _normalize_tag_roles_defaults(tags_value: Any, available_tags: dict[str, TagDefinition]) -> dict[str, list[str]]:
+    """Normalize tags default value to dict format: {tag: [stages]}."""
     if isinstance(tags_value, dict):
         return {k: list(v) for k, v in tags_value.items() if k in available_tags}
     elif isinstance(tags_value, list):
         result = {}
         for tag in tags_value:
             if tag in available_tags:
-                roles = sorted(available_tags[tag].params_by_role.keys())
-                result[tag] = roles
+                result[tag] = available_tags[tag].stages
         return result
     return {}
 
@@ -647,52 +627,11 @@ def get_dynamic_tag_fields(
     project_root: Path,
 ) -> list[FieldMeta]:
     """Build custom fields for tag parameters based on selected tags.
-
-    Args:
-        selected_tags: Dict of tag -> list of roles (stages) where tag is active
-        existing_values: Current form values (to preserve defaults/overrides)
-        project_root: Project root directory
-
-    Returns:
-        List of FieldMeta for tag parameters that should be included.
+    
+    Note: Tag params via params.yaml are deprecated. All inputs should be defined
+    in pipeline.yml. This function returns empty list for backwards compatibility.
     """
-    from devpipe.project_config import load_project_config
-
-    if not selected_tags:
-        return []
-
-    # Load tag definitions for selected tags
-    tag_defs = load_tag_definitions(list(selected_tags.keys()), project_root)
-    if not tag_defs:
-        return []
-
-    project_cfg = load_project_config(project_root)
-    # Convert tag_roles dict to sets for collect_params
-    tag_roles_sets = {tag: set(roles) for tag, roles in selected_tags.items()}
-    dynamic_fields: list[FieldMeta] = []
-
-    for _tag_name, param, available, default in collect_params(tag_defs, project_cfg.tag_params, tag_roles_sets):
-        # Skip if this field key is already in existing_values? We include all.
-        # Determine current value: use existing if present, else default
-        current_value = existing_values.get(param.key)
-        if current_value is None and not param.multi and default:
-            current_value = default
-        # Infer kind based on current_value and available, multi
-        kind = _infer_kind(current_value, available, multi=param.multi)
-        # Build field meta
-        field_meta = FieldMeta(
-            key=param.key,
-            label=_key_to_label(param.key),
-            kind=kind,
-            required=param.required,
-            options=[str(v) for v in available],
-            default=current_value if current_value is not None else ([] if param.multi else ""),
-            description=param.description,
-            section="custom",
-        )
-        dynamic_fields.append(field_meta)
-
-    return dynamic_fields
+    return []
 
 
 def _convert_inputs_to_fields(inputs: dict[str, Any], project_root: Path | None = None, profile: Any = None) -> list[FieldMeta]:
@@ -727,8 +666,8 @@ def _convert_inputs_to_fields(inputs: dict[str, Any], project_root: Path | None 
             tag_roles_extra: dict[str, list[str]] = {}
             for tag_name in available_tags:
                 tag_def = available_tags.get(tag_name)
-                if tag_def and tag_def.params_by_role:
-                    tag_roles_extra[tag_name] = sorted(tag_def.params_by_role.keys())
+                if tag_def and tag_def.stages:
+                    tag_roles_extra[tag_name] = tag_def.stages
                 else:
                     tag_roles_extra[tag_name] = profile_stages
             default_tag_roles = _normalize_tag_roles_defaults(default, available_tags)

@@ -208,15 +208,15 @@ def apply_history_entry(state: UIState, entry: RunHistoryEntry | dict) -> UIStat
     else:
         tags_list = config.get("tags", [])
         if tags_list:
-            # Convert list to dict with all available roles for each tag
+            # Convert list to dict with all available stages for each tag
             cwd = Path.cwd()  # FIXME: use project root from state? but we don't have it here
             available_tags = load_available_tags(cwd)
             converted: dict[str, list[str]] = {}
             for tag in tags_list:
                 if tag in available_tags:
-                    roles = sorted(available_tags[tag].params_by_role.keys())
-                    if roles:
-                        converted[tag] = roles
+                    stages = available_tags[tag].stages
+                    if stages:
+                        converted[tag] = stages
             new.form.values["tags"] = converted
         else:
             new.form.values["tags"] = {}

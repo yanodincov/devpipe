@@ -36,7 +36,7 @@ from devpipe.app import RunConfig
 from devpipe.history import load_history
 from devpipe.project_config import load_project_config
 from devpipe.runtime.state import STAGE_ORDER
-from devpipe.tags import collect_params, load_available_tags, load_tag_definitions
+from devpipe.tags import load_available_tags, load_tag_definitions
 
 
 def _git_branch() -> str:
@@ -363,22 +363,12 @@ def run_tui(base_dir: Path) -> RunConfig | None:
 
 
     def _load_tag_params() -> list:
-        eff_first = cfg["first_role"] or "architect"
-        eff_last = _effective_last(cfg)
-        first_idx = STAGE_ORDER.index(eff_first)
-        last_idx = STAGE_ORDER.index(eff_last)
-        active_roles = set(STAGE_ORDER[first_idx: last_idx + 1])
-        tag_defs = load_tag_definitions(cfg["tags"])
-        return collect_params(tag_defs, project_cfg.tag_params, active_roles)
+        # Tag params via params.yaml are deprecated. All inputs are in pipeline.yml.
+        return []
 
     def _init_tag_param_defaults(tag_params_meta: list) -> None:
-        for _tag_name, param, _available, default in tag_params_meta:
-            if param.key not in cfg["extra_params"]:
-                project_default = project_cfg.defaults.get(param.key)
-                if project_default is not None:
-                    cfg["extra_params"][param.key] = project_default
-                else:
-                    cfg["extra_params"][param.key] = [] if param.multi else default
+        # No-op: tag params are deprecated
+        pass
 
     def _input_header() -> None:
         console.clear()

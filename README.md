@@ -183,7 +183,7 @@ defaults:
 1. `.devpipe/tags/<tag>/<stage>/rules.md` — кастомные теги проекта
 2. `tags/<tag>/<stage>/rules.md` — builtin теги devpipe
 
-### Структура директории тега
+Структура директории тега:
 
 ```
 tags/
@@ -201,37 +201,8 @@ tags/
         ├── developer/
         │   └── rules.md
         └── qa_stand/
-            ├── rules.md
-            └── params.yaml           # параметры для qa_stand
+            └── rules.md
 ```
-
-### params.yaml — динамические параметры
-
-Если тегу нужны входные данные от пользователя (например, `dataset` для qa_stand), определите их в `params.yaml`:
-
-```yaml
-# .devpipe/tags/my-service/qa_stand/params.yaml
-params:
-  - key: dataset
-    description: "Выберите тестовый датасет"
-    required: true
-    available:
-      - s4-3ds
-      - s4-no3ds
-    multi: false        # одиночный выбор (true — множественный)
-
-  - key: environments
-    description: "Целевые окружения"
-    required: false
-    available:
-      - staging
-      - prod
-    multi: true         # множественный выбор
-```
-
-При активации тега:
-- Параметры появляются в TUI как дополнительные поля
-- Выбранные значения доступны в `release_context.<param>` в промпте
 
 ### Builtin теги
 
