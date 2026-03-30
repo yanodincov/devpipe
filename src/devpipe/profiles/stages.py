@@ -145,18 +145,34 @@ class StageOutField(BaseModel):
 
 
 class AgentSpec(BaseModel):
-    """Agent specification for a stage (prompt and output schema)."""
-    model_config = ConfigDict(extra='ignore')
+    """Agent specification for a stage.
+    
+    Either 'folder' or both 'prompt' and 'schema' must be specified.
+    - folder: path to directory containing prompt.md and output.schema.json
+    - prompt: path to prompt file (relative to profile directory)
+    - schema: path to output schema file (relative to profile directory)
+    
+    After loading, prompt_content and schema_content contain the file contents.
+    """
+    model_config = ConfigDict(extra='forbid')
 
-    prompt: str = ""
-    output_schema: dict[str, object] = Field(default_factory=dict)
+    folder: str | None = None
+    prompt: str | None = None
+    schema_path: str | None = Field(default=None, alias="schema")
+    # Loaded content (populated after loading)
+    prompt_content: str = ""
+    schema_content: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_agent_defined(self) -> AgentSpec:
-        """Validate that at least prompt or output_schema is provided."""
-        if not self.prompt and not self.output_schema:
-            raise ValueError("agent must have at least prompt or output_schema")
-        return self
+    def validate_agent_spec(self) -> AgentSpec:
+        """Validate that either folder or (prompt + schema) is specified."""
+        if self.folder:
+            if self.prompt or self.schema_path:
+                raise ValueError("agent: when 'folder' is specified, 'prompt' and 'schema' must not be set")
+            return self
+        if self.prompt and self.schema_path:
+            return self
+        raise ValueError("agent: must specify either 'folder' or both 'prompt' and 'schema'")
 
 
 class StageSpec(BaseModel):

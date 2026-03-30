@@ -44,8 +44,13 @@ AVAILABLE_MODELS = {
 AVAILABLE_EFFORTS = {"auto", "low", "middle", "medium", "high"}
 
 
-def validate_pipeline_file(path: Path) -> ValidationResult:
-    """Validate a pipeline.yml file and collect all errors."""
+def validate_pipeline_file(path: Path, profile_dir: Path | None = None) -> ValidationResult:
+    """Validate a pipeline.yml file and collect all errors.
+    
+    Args:
+        path: Path to pipeline.yml file
+        profile_dir: Optional path to profile directory (for validating agent files)
+    """
     errors: list[ValidationError] = []
     warnings: list[str] = []
     
@@ -54,6 +59,10 @@ def validate_pipeline_file(path: Path) -> ValidationResult:
             valid=False,
             errors=[ValidationError(path="", message=f"File not found: {path}")]
         )
+    
+    # Infer profile_dir if not provided
+    if profile_dir is None:
+        profile_dir = path.parent
     
     content_raw = path.read_text(encoding="utf-8")
     
@@ -114,7 +123,7 @@ def validate_pipeline_file(path: Path) -> ValidationResult:
     if not isinstance(stages, dict):
         errors.append(ValidationError(path="stages", message="stages must be a dictionary"))
     else:
-        stage_errors, stage_warnings = _validate_stages(stages)
+        stage_errors, stage_warnings = _validate_stages(stages, profile_dir)
         errors.extend(stage_errors)
         warnings.extend(stage_warnings)
     
@@ -145,19 +154,15 @@ def validate_pipeline_file(path: Path) -> ValidationResult:
 
 
 def validate_profile(profile_dir: Path) -> ValidationResult:
-    """Validate a complete profile directory including pipeline.yml and agent files."""
+    """Validate a complete profile directory including pipeline.yml.
+    
+    Agent files are validated when referenced in pipeline.yml stages.
+    """
     pipeline_path = profile_dir / "pipeline.yml"
     if not pipeline_path.exists():
         pipeline_path = profile_dir / "pipeline.yaml"
     
-    result = validate_pipeline_file(pipeline_path)
-    
-    # Validate agent files
-    agent_errors = validate_agent_files(profile_dir)
-    result.errors.extend(agent_errors)
-    
-    if agent_errors:
-        result.valid = False
+    result = validate_pipeline_file(pipeline_path, profile_dir)
     
     return result
 
@@ -277,7 +282,7 @@ def _validate_inputs(inputs: dict[str, Any]) -> list[ValidationError]:
     return errors
 
 
-def _validate_stages(stages: dict[str, Any]) -> tuple[list[ValidationError], list[str]]:
+def _validate_stages(stages: dict[str, Any], profile_dir: Path) -> tuple[list[ValidationError], list[str]]:
     """Validate stages section.
     
     Returns tuple of (errors, warnings).
@@ -376,7 +381,7 @@ def _validate_stages(stages: dict[str, Any]) -> tuple[list[ValidationError], lis
         # Validate agent
         agent = spec.get("agent")
         if agent is not None:
-            errors.extend(_validate_agent(agent, f"{path_prefix}.agent"))
+            errors.extend(_validate_agent(agent, f"{path_prefix}.agent", profile_dir))
     
     return errors, warnings
 
@@ -493,34 +498,123 @@ def _validate_output_fields(fields: dict[str, Any], path_prefix: str) -> tuple[l
     return errors, warnings
 
 
-def _validate_agent(agent: Any, path_prefix: str) -> list[ValidationError]:
-    """Validate agent specification."""
+def _validate_agent(agent: Any, path_prefix: str, profile_dir: Path) -> list[ValidationError]:
+    """Validate agent specification.
+    
+    Agent must be a dict with either:
+    - folder: name of folder in agents/ directory (must contain prompt.md and output.schema.json)
+    - prompt + schema: paths to prompt and schema files (relative to profile directory)
+    """
     errors = []
     
-    if isinstance(agent, str):
-        # Short form: agent name - validated later when checking files
-        pass
-    elif isinstance(agent, dict):
-        prompt = agent.get("prompt")
-        schema = agent.get("output_schema")
+    if not isinstance(agent, dict):
+        errors.append(ValidationError(
+            path=path_prefix,
+            message="Agent must be an object with 'folder' or both 'prompt' and 'schema'"
+        ))
+        return errors
+    
+    folder = agent.get("folder")
+    prompt = agent.get("prompt")
+    schema = agent.get("schema")
+    
+    # Check for unknown fields
+    known_fields = {"folder", "prompt", "schema"}
+    unknown = set(agent.keys()) - known_fields
+    if unknown:
+        errors.append(ValidationError(
+            path=path_prefix,
+            message=f"Unknown agent fields: {', '.join(sorted(unknown))}"
+        ))
+    
+    if folder is not None:
+        # folder mode
+        if not isinstance(folder, str):
+            errors.append(ValidationError(
+                path=f"{path_prefix}.folder",
+                message="folder must be a string"
+            ))
+            return errors
         
-        if prompt is not None and not isinstance(prompt, str):
+        if prompt is not None or schema is not None:
+            errors.append(ValidationError(
+                path=path_prefix,
+                message="When 'folder' is specified, 'prompt' and 'schema' must not be set"
+            ))
+            return errors
+        
+        # Validate folder exists and has required files
+        agent_dir = profile_dir / "agents" / folder
+        if not agent_dir.exists():
+            errors.append(ValidationError(
+                path=f"{path_prefix}.folder",
+                message=f"Agent folder 'agents/{folder}' not found"
+            ))
+        else:
+            prompt_file = agent_dir / "prompt.md"
+            schema_file = agent_dir / "output.schema.json"
+            
+            if not prompt_file.exists():
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.folder",
+                    message=f"Agent folder 'agents/{folder}' missing prompt.md"
+                ))
+            if not schema_file.exists():
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.folder",
+                    message=f"Agent folder 'agents/{folder}' missing output.schema.json"
+                ))
+            elif schema_file.exists():
+                # Validate schema file is valid JSON
+                errors.extend(_validate_output_schema(schema_file, f"{path_prefix}.folder"))
+    
+    elif prompt is not None or schema is not None:
+        # prompt + schema mode
+        if prompt is None:
             errors.append(ValidationError(
                 path=f"{path_prefix}.prompt",
-                message="prompt must be a string"
+                message="'prompt' is required when 'schema' is specified"
+            ))
+        if schema is None:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.schema",
+                message="'schema' is required when 'prompt' is specified"
             ))
         
-        if schema is not None:
-            # output_schema can be a string (path) or dict (inline schema)
-            if not isinstance(schema, (str, dict)):
+        if prompt is not None:
+            if not isinstance(prompt, str):
                 errors.append(ValidationError(
-                    path=f"{path_prefix}.output_schema",
-                    message="output_schema must be a string (path) or dictionary"
+                    path=f"{path_prefix}.prompt",
+                    message="prompt must be a string (file path)"
                 ))
+            else:
+                prompt_file = profile_dir / prompt
+                if not prompt_file.exists():
+                    errors.append(ValidationError(
+                        path=f"{path_prefix}.prompt",
+                        message=f"Prompt file not found: {prompt}"
+                    ))
+        
+        if schema is not None:
+            if not isinstance(schema, str):
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.schema",
+                    message="schema must be a string (file path)"
+                ))
+            else:
+                schema_file = profile_dir / schema
+                if not schema_file.exists():
+                    errors.append(ValidationError(
+                        path=f"{path_prefix}.schema",
+                        message=f"Schema file not found: {schema}"
+                    ))
+                else:
+                    errors.extend(_validate_output_schema(schema_file, f"{path_prefix}.schema"))
+    
     else:
         errors.append(ValidationError(
             path=path_prefix,
-            message="Agent must be a string (name) or dictionary"
+            message="Agent must specify either 'folder' or both 'prompt' and 'schema'"
         ))
     
     return errors
@@ -793,35 +887,6 @@ def _validate_binding_source(
             path=path,
             message=f"Unknown binding prefix '{prefix}'. Must be input, context, stage, runtime, or integration"
         ))
-    
-    return errors
-
-
-def validate_agent_files(profile_dir: Path) -> list[ValidationError]:
-    """Validate agent files (prompt.md and output.schema.json) exist."""
-    errors = []
-    agents_dir = profile_dir / "agents"
-    
-    if not agents_dir.exists():
-        return errors
-    
-    for agent_dir in agents_dir.iterdir():
-        if not agent_dir.is_dir():
-            continue
-        
-        agent_name = agent_dir.name
-        prompt_file = agent_dir / "prompt.md"
-        schema_file = agent_dir / "output.schema.json"
-        
-        # At least one of prompt.md or output.schema.json should exist
-        if not prompt_file.exists() and not schema_file.exists():
-            errors.append(ValidationError(
-                path=f"agents.{agent_name}",
-                message=f"Agent '{agent_name}' must have at least prompt.md or output.schema.json"
-            ))
-        
-        if schema_file.exists():
-            errors.extend(_validate_output_schema(schema_file, f"agents.{agent_name}"))
     
     return errors
 

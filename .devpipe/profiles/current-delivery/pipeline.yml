@@ -46,7 +46,8 @@ stages:
     model: medium
     effort: medium
     retry_limit: 2
-    agent: architect
+    agent:
+      folder: architect
     in:
       task: input.task
       jira: integration.jira.issue
@@ -62,7 +63,8 @@ stages:
     retry_limit: 2
     tags:
       - go
-    agent: developer
+    agent:
+      folder: developer
     in:
       task: input.task
       architecture_plan: stage.architect.out.architecture_plan
@@ -78,7 +80,8 @@ stages:
     retry_limit: 2
     tags:
       - go
-    agent: test_developer
+    agent:
+      folder: test_developer
     in:
       task: input.task
       code_changes: stage.developer.out.code_changes
@@ -92,7 +95,8 @@ stages:
     model: middle
     effort: middle
     retry_limit: 2
-    agent: qa_local
+    agent:
+      folder: qa_local
     in:
       task: input.task
       tests: stage.test_developer.out.tests
@@ -107,7 +111,8 @@ stages:
     model: low
     effort: low
     retry_limit: 1
-    agent: release
+    agent:
+      folder: release
     in:
       qa_report: stage.qa_local.out.qa_report
       target_branch: input.target_branch
@@ -128,7 +133,8 @@ stages:
     model: middle
     effort: middle
     retry_limit: 1
-    agent: qa_stand
+    agent:
+      folder: qa_stand
     in:
       release_metadata: stage.release.out.release_metadata
       shared_context: context.shared

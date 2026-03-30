@@ -239,54 +239,68 @@ def _parse_profile_stages(
                     out_fields[field_name] = FieldSpec(type=field_spec)
             stage_data["out"] = StageOutField(fields=out_fields)
 
-        # Handle agent specification
+# Handle agent specification
         if "agent" in stage_data:
             agent_data = stage_data["agent"]
-            if isinstance(agent_data, str):
-                # Agent name - load from agents/ subdirectory
-                agent_dir = base_dir / "agents" / agent_data
-                prompt_path = agent_dir / "prompt.md"
-                schema_path = agent_dir / "output.schema.json"
-                prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
-                schema = {}
-                if schema_path.exists():
-                    import json
-                    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                stage_data["agent"] = AgentSpec(prompt=prompt, output_schema=schema)
-            elif isinstance(agent_data, dict):
-                # Inline agent definition - may contain file paths for prompt/schema
-                prompt_spec = agent_data.get("prompt")
-                schema_spec = agent_data.get("output_schema")
-                prompt = ""
-                schema = {}
-                if isinstance(prompt_spec, str):
-                    # Could be raw text or a file path
-                    prompt_path = base_dir / prompt_spec
-                    if prompt_path.exists() and prompt_path.is_file():
-                        prompt = prompt_path.read_text(encoding="utf-8")
-                    else:
-                        prompt = prompt_spec
-                if isinstance(schema_spec, str):
-                    # Could be JSON text or a file path
-                    schema_path = base_dir / schema_spec
-                    if schema_path.exists() and schema_path.is_file():
-                        import json
-                        schema = json.loads(schema_path.read_text(encoding="utf-8"))
-                    else:
-                        # Might be raw JSON string
-                        try:
-                            schema = json.loads(schema_spec)
-                        except json.JSONDecodeError:
-                            schema = {}
-                elif isinstance(schema_spec, dict):
-                    schema = schema_spec
-                # Merge with any other fields
+            if not isinstance(agent_data, dict):
+                raise ProfileLoadError(f"Stage '{stage_key}': agent must be an object with 'folder' or 'prompt'+'schema'")
+            
+            folder = agent_data.get("folder")
+            prompt_path = agent_data.get("prompt")
+            schema_path = agent_data.get("schema")
+            
+            if folder:
+                # Load from agents/<folder>/ directory
+                if prompt_path or schema_path:
+                    raise ProfileLoadError(
+                        f"Stage '{stage_key}': agent.folder is mutually exclusive with prompt/schema"
+                    )
+                agent_dir = base_dir / "agents" / folder
+                prompt_file = agent_dir / "prompt.md"
+                schema_file = agent_dir / "output.schema.json"
+                
+                if not agent_dir.exists():
+                    raise ProfileLoadError(f"Stage '{stage_key}': agent folder '{folder}' not found")
+                if not prompt_file.exists():
+                    raise ProfileLoadError(f"Stage '{stage_key}': prompt.md not found in agent folder '{folder}'")
+                if not schema_file.exists():
+                    raise ProfileLoadError(f"Stage '{stage_key}': output.schema.json not found in agent folder '{folder}'")
+                
+                import json
+                prompt_content = prompt_file.read_text(encoding="utf-8")
+                schema_content = json.loads(schema_file.read_text(encoding="utf-8"))
+                
                 stage_data["agent"] = AgentSpec(
-                    prompt=prompt,
-                    output_schema=schema,
-                    **{k: v for k, v in agent_data.items() if k not in ("prompt", "output_schema")}
+                    folder=folder,
+                    prompt_content=prompt_content,
+                    schema_content=schema_content,
                 )
-            # If agent is None or empty, it will be handled by the default
+                
+            elif prompt_path and schema_path:
+                # Load from explicit paths
+                prompt_file = base_dir / prompt_path
+                schema_file = base_dir / schema_path
+                
+                if not prompt_file.exists():
+                    raise ProfileLoadError(f"Stage '{stage_key}': agent prompt file not found: {prompt_path}")
+                if not schema_file.exists():
+                    raise ProfileLoadError(f"Stage '{stage_key}': agent schema file not found: {schema_path}")
+                
+                import json
+                prompt_content = prompt_file.read_text(encoding="utf-8")
+                schema_content = json.loads(schema_file.read_text(encoding="utf-8"))
+                
+                stage_data["agent"] = AgentSpec(
+                    prompt=prompt_path,
+                    schema_path=schema_path,
+                    prompt_content=prompt_content,
+                    schema_content=schema_content,
+                )
+                
+            else:
+                raise ProfileLoadError(
+                    f"Stage '{stage_key}': agent must specify either 'folder' or both 'prompt' and 'schema'"
+                )
 
         # Create StageSpec
         stage = StageSpec(**stage_data)

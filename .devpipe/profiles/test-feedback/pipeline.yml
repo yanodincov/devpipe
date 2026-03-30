@@ -43,7 +43,7 @@ stages:
     retry_limit: 1
     agent:
       prompt: agents/init/prompt.md
-      output_schema: agents/init/output.schema.json
+      schema: agents/init/output.schema.json
     in:
       task: input.task
       severity: input.severity
@@ -62,7 +62,7 @@ stages:
     retry_limit: 2
     agent:
       prompt: agents/review/prompt.md
-      output_schema: agents/review/output.schema.json
+      schema: agents/review/output.schema.json
     in:
       task: input.task
       plan: stage.init.out.initial_plan
@@ -85,7 +85,7 @@ stages:
     retry_limit: 2
     agent:
       prompt: agents/fix/prompt.md
-      output_schema: agents/fix/output.schema.json
+      schema: agents/fix/output.schema.json
     in:
       task: input.task
       plan: stage.init.out.initial_plan
@@ -105,7 +105,7 @@ stages:
     retry_limit: 1
     agent:
       prompt: agents/verify/prompt.md
-      output_schema: agents/verify/output.schema.json
+      schema: agents/verify/output.schema.json
     in:
       task: input.task
       plan: stage.fix.out.updated_plan if stage.fix.out.changes_made else stage.init.out.initial_plan
