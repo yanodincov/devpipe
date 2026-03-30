@@ -127,6 +127,24 @@ def validate_pipeline_file(path: Path) -> ValidationResult:
     )
 
 
+def validate_profile(profile_dir: Path) -> ValidationResult:
+    """Validate a complete profile directory including pipeline.yml and agent files."""
+    pipeline_path = profile_dir / "pipeline.yml"
+    if not pipeline_path.exists():
+        pipeline_path = profile_dir / "pipeline.yaml"
+    
+    result = validate_pipeline_file(pipeline_path)
+    
+    # Validate agent files
+    agent_errors = validate_agent_files(profile_dir)
+    result.errors.extend(agent_errors)
+    
+    if agent_errors:
+        result.valid = False
+    
+    return result
+
+
 def _validate_top_level(content: dict) -> list[ValidationError]:
     """Validate top-level required fields."""
     errors = []
@@ -524,8 +542,172 @@ def _validate_defaults(defaults: dict[str, Any], inputs: dict[str, Any], stages:
 def _validate_cross_references(inputs: dict, stages: dict, routing: dict) -> list[ValidationError]:
     """Validate cross-references between sections."""
     errors = []
+    stage_names = set(stages.keys())
     
-    # TODO: Add cross-reference validation for input bindings
+    # Build output field registry
+    stage_outputs: dict[str, set[str]] = {}
+    for stage_name, stage_spec in stages.items():
+        if isinstance(stage_spec, dict):
+            out = stage_spec.get("out", {})
+            if isinstance(out, dict):
+                stage_outputs[stage_name] = set(out.keys())
+            else:
+                stage_outputs[stage_name] = set()
+    
+    # Validate input bindings in each stage
+    for stage_name, stage_spec in stages.items():
+        if not isinstance(stage_spec, dict):
+            continue
+        
+        in_bindings = stage_spec.get("in", {})
+        if not isinstance(in_bindings, dict):
+            continue
+        
+        for binding_name, source in in_bindings.items():
+            if not isinstance(source, str):
+                continue
+            
+            errors.extend(_validate_binding_source(
+                source, 
+                inputs, 
+                stage_outputs, 
+                stage_names,
+                f"stages.{stage_name}.in.{binding_name}"
+            ))
+    
+    return errors
+
+
+def _validate_binding_source(
+    source: str, 
+    inputs: dict, 
+    stage_outputs: dict[str, set[str]],
+    stage_names: set[str],
+    path: str
+) -> list[ValidationError]:
+    """Validate a single binding source reference."""
+    errors = []
+    
+    parts = source.split(".", 1)
+    if len(parts) < 2:
+        errors.append(ValidationError(
+            path=path,
+            message=f"Invalid binding source '{source}'. Must be in format 'prefix.field'"
+        ))
+        return errors
+    
+    prefix = parts[0]
+    field = parts[1] if len(parts) > 1 else ""
+    
+    if prefix == "input":
+        # input.field_name
+        if field not in inputs:
+            errors.append(ValidationError(
+                path=path,
+                message=f"Input '{field}' referenced in binding not found in inputs section"
+            ))
+    
+    elif prefix == "stage":
+        # stage.stage_name.field_name
+        stage_parts = field.split(".", 1)
+        if len(stage_parts) < 2:
+            errors.append(ValidationError(
+                path=path,
+                message=f"Invalid stage binding '{source}'. Must be 'stage.stage_name.field_name'"
+            ))
+        else:
+            ref_stage = stage_parts[0]
+            ref_field = stage_parts[1]
+            
+            if ref_stage not in stage_names:
+                errors.append(ValidationError(
+                    path=path,
+                    message=f"Stage '{ref_stage}' referenced in binding not found in stages section"
+                ))
+            elif ref_stage in stage_outputs and ref_field not in stage_outputs[ref_stage]:
+                errors.append(ValidationError(
+                    path=path,
+                    message=f"Output field '{ref_field}' not found in stage '{ref_stage}'"
+                ))
+    
+    elif prefix == "context":
+        # context.field_name - runtime context, always valid
+        pass
+    
+    elif prefix == "runtime":
+        # runtime.field_name - runtime values, always valid
+        pass
+    
+    elif prefix == "integration":
+        # integration.field_name - integration values, always valid
+        pass
+    
+    else:
+        errors.append(ValidationError(
+            path=path,
+            message=f"Unknown binding prefix '{prefix}'. Must be input, context, stage, runtime, or integration"
+        ))
+    
+    return errors
+
+
+def validate_agent_files(profile_dir: Path) -> list[ValidationError]:
+    """Validate agent files (prompt.md and output.schema.json) exist."""
+    errors = []
+    agents_dir = profile_dir / "agents"
+    
+    if not agents_dir.exists():
+        return errors
+    
+    for agent_dir in agents_dir.iterdir():
+        if not agent_dir.is_dir():
+            continue
+        
+        agent_name = agent_dir.name
+        prompt_file = agent_dir / "prompt.md"
+        schema_file = agent_dir / "output.schema.json"
+        
+        # At least one of prompt.md or output.schema.json should exist
+        if not prompt_file.exists() and not schema_file.exists():
+            errors.append(ValidationError(
+                path=f"agents.{agent_name}",
+                message=f"Agent '{agent_name}' must have at least prompt.md or output.schema.json"
+            ))
+        
+        if schema_file.exists():
+            errors.extend(_validate_output_schema(schema_file, f"agents.{agent_name}"))
+    
+    return errors
+
+
+def _validate_output_schema(schema_path: Path, path_prefix: str) -> list[ValidationError]:
+    """Validate output.schema.json structure."""
+    errors = []
+    
+    try:
+        import json
+        content = json.loads(schema_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        return [ValidationError(
+            path=f"{path_prefix}.output.schema.json",
+            message=f"Invalid JSON: {e}"
+        )]
+    except FileNotFoundError:
+        return []
+    
+    if not isinstance(content, dict):
+        errors.append(ValidationError(
+            path=f"{path_prefix}.output.schema.json",
+            message="Schema must be a JSON object"
+        ))
+        return errors
+    
+    schema_type = content.get("type")
+    if schema_type and schema_type != "object":
+        errors.append(ValidationError(
+            path=f"{path_prefix}.output.schema.json",
+            message=f"Root type should be 'object', got '{schema_type}'"
+        ))
     
     return errors
 
