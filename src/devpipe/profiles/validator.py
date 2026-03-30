@@ -270,6 +270,46 @@ def _validate_inputs(inputs: dict[str, Any]) -> list[ValidationError]:
                             message=f"Value '{val}' does not match type '{type_val}'"
                         ))
         
+        # Validate default
+        default = spec.get("default")
+        if default is not None and default != "":
+            # If custom is false and values exist, default must be one of values
+            if not custom and values is not None:
+                # For multi, default should be a list and all values must be in values
+                if multi:
+                    if isinstance(default, list):
+                        for val in default:
+                            if val not in values:
+                                errors.append(ValidationError(
+                                    path=f"{path_prefix}.default",
+                                    message=f"Default value '{val}' is not in values list"
+                                ))
+                    else:
+                        errors.append(ValidationError(
+                            path=f"{path_prefix}.default",
+                            message="multi=true requires default to be a list"
+                        ))
+                else:
+                    # Single select - default must be in values
+                    if isinstance(default, list):
+                        errors.append(ValidationError(
+                            path=f"{path_prefix}.default",
+                            message="multi=false requires default to be a scalar, not a list"
+                        ))
+                    elif default not in values:
+                        errors.append(ValidationError(
+                            path=f"{path_prefix}.default",
+                            message=f"Default value '{default}' is not in values list"
+                        ))
+            
+            # If multi is false, default must be scalar (not a list)
+            if not multi and not custom:
+                if isinstance(default, list):
+                    errors.append(ValidationError(
+                        path=f"{path_prefix}.default",
+                        message="multi=false requires default to be a scalar, not a list"
+                    ))
+        
         # Bool-specific warnings
         if type_val == "bool":
             if values is not None:

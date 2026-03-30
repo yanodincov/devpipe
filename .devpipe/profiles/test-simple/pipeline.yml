@@ -16,6 +16,11 @@ inputs:
     default: 1
     custom: false
     values: [1, 2, 3]
+  count2:
+    type: int
+    default: 1
+    custom: false
+    values: [1, 2]
 
 stages:
   echo:

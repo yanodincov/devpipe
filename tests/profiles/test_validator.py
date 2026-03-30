@@ -260,3 +260,104 @@ routing:
 """
         result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
         assert result.valid, [e.message for e in result.errors]
+
+    def test_default_not_in_values(self, tmp_path: Path):
+        """Test that default must be in values when custom is false."""
+        pipeline = """
+version: 1
+name: test
+inputs:
+  my_field:
+    type: string
+    default: "value3"
+    values: ["value1", "value2"]
+stages:
+  build:
+    runner: codex
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert not result.valid
+        assert any("not in values" in e.message for e in result.errors)
+
+    def test_default_list_without_multi(self, tmp_path: Path):
+        """Test that default cannot be a list when multi is false."""
+        pipeline = """
+version: 1
+name: test
+inputs:
+  my_field:
+    type: string
+    default: ["value1"]
+    values: ["value1", "value2"]
+stages:
+  build:
+    runner: codex
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert not result.valid
+        assert any("scalar" in e.message.lower() and "list" in e.message.lower() for e in result.errors)
+
+    def test_default_list_with_multi_valid(self, tmp_path: Path):
+        """Test that default can be a list when multi is true."""
+        pipeline = """
+version: 1
+name: test
+inputs:
+  my_field:
+    type: string
+    multi: true
+    default: ["value1"]
+    values: ["value1", "value2"]
+stages:
+  build:
+    runner: codex
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert result.valid, [e.message for e in result.errors]
+
+    def test_default_list_with_multi_not_in_values(self, tmp_path: Path):
+        """Test that multi default values must all be in values."""
+        pipeline = """
+version: 1
+name: test
+inputs:
+  my_field:
+    type: string
+    multi: true
+    default: ["value1", "value3"]
+    values: ["value1", "value2"]
+stages:
+  build:
+    runner: codex
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert not result.valid
+        assert any("not in values" in e.message for e in result.errors)
