@@ -753,7 +753,8 @@ def _validate_routing(routing: dict[str, Any], stages: dict[str, Any]) -> list[V
     
     # Validate path to completed
     if start_stage and start_stage in stage_names:
-        if not _has_path_to_completed(routing, start_stage, stage_names):
+        path_exists = _has_path_to_completed(routing, start_stage, stage_names)
+        if not path_exists:
             errors.append(ValidationError(
                 path="routing",
                 message=f"No path from start_stage '{start_stage}' to 'completed'. Pipeline cannot reach completion."

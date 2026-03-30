@@ -525,12 +525,15 @@ def _get_reachable_stages(graph: dict[str, set[str]], start: str) -> set[str]:
     stack = [start]
     while stack:
         current = stack.pop()
-        if current in reachable or current in {"completed", "failed"}:
+        if current in reachable:
             continue
         reachable.add(current)
+        # Stop at completed/failed - don't traverse beyond them
+        if current in {"completed", "failed"}:
+            continue
         if current in graph:
             for next_stage in graph[current]:
-                if next_stage not in reachable and next_stage not in {"completed", "failed"}:
+                if next_stage not in reachable:
                     stack.append(next_stage)
     return reachable
 
