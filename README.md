@@ -122,73 +122,183 @@ available:
         params.yaml       # параметры нужные qa_stand (опционально)
 ```
 
-Каждый файл `rules.md` дописывается к промпту соответствующей роли когда тег активен.
-
 ---
 
 ## Теги
 
-### Как работают
+Теги позволяют добавлять контекстно-зависимые правила к промптам ролей. Когда тег активирован для определённой роли, содержимое `rules.md` дописывается к промпту.
 
-При запуске роли devpipe собирает промпт так:
+### Где определяются теги
+
+**1. В pipeline.yml — входной параметр `tags`:**
+
+```yaml
+inputs:
+  tags:
+    type: string
+    multi: true        # множественный выбор
+    default: []        # список выбранных тегов
+    custom: true       # разрешить произвольные значения
+    values: [go, backend, frontend]  # доступные теги
+```
+
+**2. В pipeline.yml — теги для стадии:**
+
+```yaml
+stages:
+  developer:
+    runner: codex
+    tags: [go, backend]   # теги, применяемые к этой стадии
+    agent:
+      folder: developer
+```
+
+**3. В config.yaml — теги по умолчанию:**
+
+```yaml
+defaults:
+  tags:
+    - my-service    # проектный тег
+    - go            # builtin тег
+```
+
+### Как работают теги при формировании промпта
+
+При запуске стадии промпт собирается так:
 
 ```
-<базовый промпт роли>
+<базовый промпт из agents/<agent>/prompt.md>
 
-## Tag Rules: my-service
-<содержимое .devpipe/tags/my-service/<role>/rules.md>
+## Project-Specific Rules
+<содержимое .devpipe/<STAGE>_RULES.md> если есть
 
 ## Tag Rules: go
-<содержимое tags/go/<role>/rules.md>
+<содержимое tags/go/developer/rules.md>
+
+## Tag Rules: my-service
+<содержимое .devpipe/tags/my-service/developer/rules.md>
 ```
 
-Порядок поиска `rules.md` для тега:
-1. `.devpipe/tags/<tag>/<role>/rules.md` — кастомные теги проекта
-2. `tags/<tag>/<role>/rules.md` — builtin теги devpipe
+Порядок поиска `rules.md`:
+1. `.devpipe/tags/<tag>/<stage>/rules.md` — кастомные теги проекта
+2. `tags/<tag>/<stage>/rules.md` — builtin теги devpipe
 
-### params.yaml — параметры для роли
+### Структура директории тега
 
-Если роли нужны входные данные (например `dataset` для qa_stand), объяви их в `params.yaml` рядом с `rules.md`:
+```
+tags/
+└── go/                               # builtin тег "go"
+    ├── developer/
+    │   └── rules.md                  # правила для developer
+    └── test_developer/
+        └── rules.md                  # правила для test_developer
+
+.devpipe/
+└── tags/
+    └── my-service/                    # кастомный тег "my-service"
+        ├── architect/
+        │   └── rules.md
+        ├── developer/
+        │   └── rules.md
+        └── qa_stand/
+            ├── rules.md
+            └── params.yaml           # параметры для qa_stand
+```
+
+### params.yaml — динамические параметры
+
+Если тегу нужны входные данные от пользователя (например, `dataset` для qa_stand), определите их в `params.yaml`:
 
 ```yaml
 # .devpipe/tags/my-service/qa_stand/params.yaml
 params:
   - key: dataset
-    description: Test dataset
+    description: "Выберите тестовый датасет"
     required: true
     available:
       - s4-3ds
       - s4-no3ds
+    multi: false        # одиночный выбор (true — множественный)
+
+  - key: environments
+    description: "Целевые окружения"
+    required: false
+    available:
+      - staging
+      - prod
+    multi: true         # множественный выбор
 ```
 
-При запуске:
-- TUI покажет `Set dataset` как отдельный пункт меню
-- Выбранное значение попадёт в `release_context` который AI видит в промпте
-- В `rules.md` можно ссылаться на него: `{release_context.dataset}`
+При активации тега:
+- Параметры появляются в TUI как дополнительные поля
+- Выбранные значения доступны в `release_context.<param>` в промпте
 
 ### Builtin теги
 
-| Тег | Роли |
-|-----|------|
-| `go` | `developer`, `test_developer` |
+| Тег | Стадии | Описание |
+|-----|--------|----------|
+| `go` | `developer`, `test_developer` | Правила для Go-проектов |
 
-### Управление тегами (новый интерфейс)
+### Интерфейс управления тегами
 
-В Textual интерфейсе поле **Tags** теперь позволяет выбирать теги и настраивать, на каких этапах пайплайна они активны:
+В TUI поле **Tags** позволяет:
+1. **Выбрать теги** — нажмите `Space` для выбора/снятия
+2. **Настроить роли** — нажмите `Enter` на теге, чтобы выбрать роли, на которых он применяется
+3. **Заполнить параметры** — если у тега есть `params.yaml`, поля появятся автоматически
 
-1. Выберите **Tags** в меню и нажмите Enter.
-2. Вы увидите список всех доступных тегов.
-   - **○** — тег не выбран.
-   - **●** — тег выбран и активен на одной или нескольких ролях.
-   - Нажмите **Space**, чтобы выбрать/снять тег.
-   - Нажмите **Enter** на теге, чтобы открыть настройку ролей, на которых тег будет применён.
-3. В экране ролей:
-   - **↑↓** — навигация.
-   - **Enter** — включить/выключить роль для этого тега.
-   - **Esc** — вернуться к списку тегов.
-4. После настройки всех тегов нажмите **Esc** в основном списке тегов, чтобы применить изменения и выйти.
+При изменении `Start Stage` / `Finish Stage` параметры автоматически пересчитываются — остаются только те, которые применимы к выбранным ролям.
 
-При изменении диапазона этапов (Start Stage / Finish Stage) или выборе тегов, система автоматически пересчитывает параметры, специфичные для тегов (например, `dataset`), и добавляет соответствующие поля в форму.
+---
+
+## Агенты (agents/)
+
+Агенты определяют промпт и схему выходных данных для каждой стадии. Хранятся в `.devpipe/profiles/<profile>/agents/<agent_name>/`.
+
+```
+agents/
+└── my_agent/
+    ├── prompt.md           # промпт для AI
+    └── output.schema.json  # JSON Schema выходных данных
+```
+
+### Подключение агента к стадии
+
+**Формат 1: по имени папки**
+```yaml
+stages:
+  build:
+    agent:
+      folder: builder    # ищет agents/builder/prompt.md и output.schema.json
+```
+
+**Формат 2: явные пути**
+```yaml
+stages:
+  build:
+    agent:
+      prompt: agents/builder/prompt.md
+      schema: agents/builder/output.schema.json
+```
+
+### output.schema.json
+
+Определяет структуру ответа AI. Пример:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "string"
+    }
+  },
+  "required": ["files_changed", "summary"]
+}
+```
 
 ---
 
