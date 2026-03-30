@@ -18,7 +18,7 @@ from devpipe.tags import collect_params, load_available_tags, load_tag_definitio
 from devpipe.ui.state import FieldKind, FieldMeta
 from devpipe.profiles.loader import ProfileDefinition, _find_pipeline_path
 from devpipe.profiles.stages import InputType
-from devpipe.profiles.validator import validate_pipeline_file, format_validation_errors
+from devpipe.profiles.validator import validate_pipeline_file, validate_profile, format_validation_errors, ValidationResult, ValidationError
 
 
 def _git_branch(project_root: Path | None = None) -> str:
@@ -368,13 +368,24 @@ def prepare_initial_state(project_root: Path | None = None) -> dict[str, Any]:
     defaults = {}
 
     if default_profile:
-        # Validate pipeline.yml first
-        pipeline_path = _find_pipeline_path(default_profile, root)
-        if pipeline_path:
-            validation_result = validate_pipeline_file(pipeline_path)
-            if not validation_result.valid:
-                profile_errors.extend(format_validation_errors(validation_result.errors))
-            profile_warnings.extend(validation_result.warnings)
+        # Validate profile (pipeline.yml and agent files)
+        profile_dir = root / ".devpipe" / "profiles" / default_profile
+        if profile_dir.exists():
+            validation_result = validate_profile(profile_dir)
+        else:
+            # Fallback to pipeline file validation
+            pipeline_path = _find_pipeline_path(default_profile, root)
+            if pipeline_path:
+                validation_result = validate_pipeline_file(pipeline_path)
+            else:
+                validation_result = ValidationResult(
+                    valid=False,
+                    errors=[ValidationError(path="", message=f"Profile '{default_profile}' not found")]
+                )
+        
+        if not validation_result.valid:
+            profile_errors.extend(format_validation_errors(validation_result.errors))
+        profile_warnings.extend(validation_result.warnings)
         
         try:
             profile_obj = load_profile(default_profile, project_root=root)

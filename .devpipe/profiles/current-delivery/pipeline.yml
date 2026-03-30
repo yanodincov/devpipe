@@ -38,6 +38,7 @@ inputs:
     required: false
     default: []
     multi: true
+    custom: true
 
 stages:
   architect:

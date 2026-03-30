@@ -145,6 +145,27 @@ def validate_profile(profile_dir: Path) -> ValidationResult:
     return result
 
 
+def validate_all_profiles(project_root: Path) -> dict[str, ValidationResult]:
+    """Validate all profiles in a project.
+    
+    Returns dict mapping profile name to validation result.
+    """
+    profiles_dir = project_root / ".devpipe" / "profiles"
+    if not profiles_dir.exists():
+        return {}
+    
+    results = {}
+    for profile_dir in profiles_dir.iterdir():
+        if profile_dir.is_dir():
+            pipeline_yml = profile_dir / "pipeline.yml"
+            pipeline_yaml = profile_dir / "pipeline.yaml"
+            if pipeline_yml.exists() or pipeline_yaml.exists():
+                profile_name = profile_dir.name
+                results[profile_name] = validate_profile(profile_dir)
+    
+    return results
+
+
 def _validate_top_level(content: dict) -> list[ValidationError]:
     """Validate top-level required fields."""
     errors = []
@@ -375,10 +396,11 @@ def _validate_agent(agent: Any, path_prefix: str) -> list[ValidationError]:
             ))
         
         if schema is not None:
-            if not isinstance(schema, dict):
+            # output_schema can be a string (path) or dict (inline schema)
+            if not isinstance(schema, (str, dict)):
                 errors.append(ValidationError(
                     path=f"{path_prefix}.output_schema",
-                    message="output_schema must be a dictionary"
+                    message="output_schema must be a string (path) or dictionary"
                 ))
     else:
         errors.append(ValidationError(
@@ -567,6 +589,11 @@ def _validate_cross_references(inputs: dict, stages: dict, routing: dict) -> lis
             if not isinstance(source, str):
                 continue
             
+            # Skip complex expressions (contain 'if', 'else', operators)
+            if ' if ' in source or ' else ' in source or any(op in source for op in ['+', '-', '*', '/', '==', '!=', '<', '>', 'and', 'or']):
+                # Complex expression - skip validation
+                continue
+            
             errors.extend(_validate_binding_source(
                 source, 
                 inputs, 
@@ -608,7 +635,7 @@ def _validate_binding_source(
             ))
     
     elif prefix == "stage":
-        # stage.stage_name.field_name
+        # stage.stage_name.field_name or stage.stage_name.out.field_name
         stage_parts = field.split(".", 1)
         if len(stage_parts) < 2:
             errors.append(ValidationError(
@@ -618,6 +645,10 @@ def _validate_binding_source(
         else:
             ref_stage = stage_parts[0]
             ref_field = stage_parts[1]
+            
+            # Handle 'out.' prefix
+            if ref_field.startswith("out."):
+                ref_field = ref_field[4:]  # Remove 'out.' prefix
             
             if ref_stage not in stage_names:
                 errors.append(ValidationError(
