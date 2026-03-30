@@ -115,6 +115,18 @@ class DetailPanel(Widget):
 
         lines: list[str] = []
 
+        # If profile has errors, show only errors (no task snapshot)
+        if form.profile_errors:
+            lines.append("")
+            lines.append("[bold white on red]  PROFILE ERRORS  [/bold white on red]")
+            lines.append("")
+            for error in form.profile_errors:
+                lines.append(f"  [bold red]![/bold red] [dim]{error}[/dim]")
+            lines.append("")
+            self._summary_text = "\n".join(lines)
+            self.refresh()
+            return
+
         if item.is_action:
             lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields)))
             lines.append("")

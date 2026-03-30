@@ -55,13 +55,28 @@ def validate_pipeline_file(path: Path) -> ValidationResult:
             errors=[ValidationError(path="", message=f"File not found: {path}")]
         )
     
+    content_raw = path.read_text(encoding="utf-8")
+    
+    # Check for common YAML syntax issues
     try:
-        content = yaml.safe_load(path.read_text(encoding="utf-8"))
+        content = yaml.safe_load(content_raw)
     except yaml.YAMLError as e:
+        # Extract line number if possible
+        line_num = ""
+        if hasattr(e, 'problem_mark') and e.problem_mark:
+            line_num = f" at line {e.problem_mark.line + 1}"
         return ValidationResult(
             valid=False,
-            errors=[ValidationError(path="", message=f"YAML parse error: {e}")]
+            errors=[ValidationError(path="", message=f"YAML syntax error{line_num}: {str(e).split('in')[0].strip() if 'in' in str(e) else str(e)}")]
         )
+    
+    # Check for tabs in YAML (often cause issues)
+    lines_with_tabs = []
+    for i, line in enumerate(content_raw.split('\n'), 1):
+        if '\t' in line and not line.strip().startswith('#'):
+            lines_with_tabs.append(i)
+    if lines_with_tabs:
+        warnings.append(f"YAML contains tab characters on lines {lines_with_tabs[:3]}{'...' if len(lines_with_tabs) > 3 else ''}. Use spaces instead.")
     
     if not isinstance(content, dict):
         return ValidationResult(
@@ -99,7 +114,9 @@ def validate_pipeline_file(path: Path) -> ValidationResult:
     if not isinstance(stages, dict):
         errors.append(ValidationError(path="stages", message="stages must be a dictionary"))
     else:
-        errors.extend(_validate_stages(stages))
+        stage_errors, stage_warnings = _validate_stages(stages)
+        errors.extend(stage_errors)
+        warnings.extend(stage_warnings)
     
     # Validate routing
     routing = content.get("routing", {})
@@ -260,9 +277,13 @@ def _validate_inputs(inputs: dict[str, Any]) -> list[ValidationError]:
     return errors
 
 
-def _validate_stages(stages: dict[str, Any]) -> list[ValidationError]:
-    """Validate stages section."""
+def _validate_stages(stages: dict[str, Any]) -> tuple[list[ValidationError], list[str]]:
+    """Validate stages section.
+    
+    Returns tuple of (errors, warnings).
+    """
     errors = []
+    warnings = []
     
     for stage_name, spec in stages.items():
         path_prefix = f"stages.{stage_name}"
@@ -348,20 +369,31 @@ def _validate_stages(stages: dict[str, Any]) -> list[ValidationError]:
                 message="Stage outputs must be a dictionary"
             ))
         elif isinstance(out_fields, dict):
-            errors.extend(_validate_output_fields(out_fields, f"{path_prefix}.out"))
+            out_errors, out_warnings = _validate_output_fields(out_fields, f"{path_prefix}.out")
+            errors.extend(out_errors)
+            warnings.extend(out_warnings)
         
         # Validate agent
         agent = spec.get("agent")
         if agent is not None:
             errors.extend(_validate_agent(agent, f"{path_prefix}.agent"))
     
-    return errors
+    return errors, warnings
 
 
 def _validate_input_bindings(bindings: dict[str, str], path_prefix: str) -> list[ValidationError]:
-    """Validate input binding sources."""
+    """Validate input binding sources.
+    
+    Valid binding formats:
+    - input.field_name
+    - context.field_name  
+    - runtime.field_name
+    - integration.service_name
+    - stage.stage_name.field_name
+    - stage.stage_name.out.field_name
+    - stage_name.result.jsonpath (references output from another stage)
+    """
     errors = []
-    allowed_prefixes = ("input.", "context.", "stage.", "runtime.", "integration.")
     
     for binding_name, source in bindings.items():
         if not isinstance(source, str):
@@ -371,23 +403,65 @@ def _validate_input_bindings(bindings: dict[str, str], path_prefix: str) -> list
             ))
             continue
         
-        if not source.startswith(allowed_prefixes):
+        # Check for complex expressions (with 'if'/'else') - skip validation
+        if ' if ' in source or ' else ' in source:
+            continue
+        
+        # Parse binding source
+        dot_count = source.count('.')
+        if dot_count < 1:
             errors.append(ValidationError(
                 path=f"{path_prefix}.{binding_name}",
-                message=f"Invalid binding source '{source}'. Must start with {', '.join(allowed_prefixes)}"
+                message=f"Invalid binding source '{source}'. Must contain at least one dot separator"
             ))
+            continue
+        
+        parts = source.split('.', 1)
+        prefix = parts[0]
+        rest = parts[1] if len(parts) > 1 else ""
+        
+        # Valid prefixes (lowercase)
+        valid_prefixes = {"input", "context", "runtime", "integration", "stage"}
+        
+        # Validate known prefixes
+        if prefix in valid_prefixes:
+            if prefix == "stage":
+                # stage.stage_name.field_name or stage.stage_name.out.field_name
+                if dot_count < 2:
+                    errors.append(ValidationError(
+                        path=f"{path_prefix}.{binding_name}",
+                        message=f"Invalid stage binding '{source}'. Expected 'stage.stage_name.field_name' or 'stage.stage_name.out.field_name'"
+                    ))
+        else:
+            # Unknown prefix - could be a stage reference like developer.result.data
+            # But we still want to catch obvious typos
+            # Accept if it looks like a reference (has at least 2 dots after prefix)
+            if dot_count < 2:
+                # Could be typo like "invalid.binding" (only 1 dot, unknown prefix)
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.{binding_name}",
+                    message=f"Unknown binding prefix '{prefix}'. Must start with input., context., runtime., integration., stage., or be a stage reference"
+                ))
     
     return errors
 
 
-def _validate_output_fields(fields: dict[str, Any], path_prefix: str) -> list[ValidationError]:
-    """Validate output field specifications."""
+def _validate_output_fields(fields: dict[str, Any], path_prefix: str) -> tuple[list[ValidationError], list[str]]:
+    """Validate output field specifications.
+    
+    Output fields should use JSON Schema format with type and optionally properties.
+    Simple type strings like 'string', 'object' are also accepted for backwards compatibility.
+    
+    Returns tuple of (errors, warnings).
+    """
     errors = []
+    warnings = []
     valid_types = {"string", "int", "bool", "object"}
     
     for field_name, field_spec in fields.items():
         if isinstance(field_spec, str):
-            # Shorthand: just type
+            # Shorthand: just type (deprecated but accepted)
+            warnings.append(f"{path_prefix}.{field_name}: Consider using JSON Schema format instead of shorthand type")
             if field_spec not in valid_types:
                 errors.append(ValidationError(
                     path=f"{path_prefix}.{field_name}",
@@ -405,13 +479,18 @@ def _validate_output_fields(fields: dict[str, Any], path_prefix: str) -> list[Va
                     path=f"{path_prefix}.{field_name}",
                     message=f"Invalid type '{field_type}'. Valid types: {', '.join(valid_types)}"
                 ))
+            
+            # For object type, recommend properties
+            if field_type == "object":
+                if "properties" not in field_spec:
+                    warnings.append(f"{path_prefix}.{field_name}: object type should define 'properties'")
         else:
             errors.append(ValidationError(
                 path=f"{path_prefix}.{field_name}",
                 message="Output field specification must be a string or dictionary"
             ))
     
-    return errors
+    return errors, warnings
 
 
 def _validate_agent(agent: Any, path_prefix: str) -> list[ValidationError]:

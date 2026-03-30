@@ -29,6 +29,7 @@ class StatusBar(Widget):
         self._center = ""
         self._right = ""
         self._is_ready = False
+        self._is_error = False
 
     def render(self) -> Text:
         text = Text()
@@ -36,8 +37,11 @@ class StatusBar(Widget):
         text.append("  ")
         text.append(self._center, style="dim")
         text.append("  ")
-        style = "bold green" if self._is_ready else "bold yellow"
-        text.append(self._right, style=style)
+        if self._is_error:
+            text.append(self._right, style="bold red")
+        else:
+            style = "bold green" if self._is_ready else "bold yellow"
+            text.append(self._right, style=style)
         return text
 
     def update_state(self, state: StatusBarState) -> None:
@@ -46,6 +50,7 @@ class StatusBar(Widget):
         self._center = state.center_text
         self._right = state.right_text
         self._is_ready = state.is_ready
+        self._is_error = state.right_text == "ERROR"
         self.refresh()
 
 

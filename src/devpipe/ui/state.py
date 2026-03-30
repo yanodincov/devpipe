@@ -208,7 +208,7 @@ def derive_status_bar(form: FormState) -> StatusBarState:
         return StatusBarState(
             left_text="↑↓ navigate  Enter edit",
             center_text=f"{len(form.profile_errors)} error(s)",
-            right_text="NOT READY",
+            right_text="ERROR",
             is_ready=False,
             validation_errors=form.profile_errors,
         )
