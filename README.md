@@ -52,24 +52,24 @@ defaults:
 ## Интерактивное меню
 
 ```
-┌─ devpipe ─────────────────────────────────────┐
-│  task          ← required                     │
-│  task-id       MRC-123        (из ветки git)  │
-│  runner        codex                          │
-│  target-branch u1                             │
-│  service       acquiring                      │
-│  namespace     auto                           │
-│  tags          acquiring-service, go          │
-│    dataset     s4-3ds                         │
-│  roles         architect → qa_stand           │
-└───────────────────────────────────────────────┘
++-- devpipe -----------------------------------------+
+| task          <- required                          |
+| task-id       MRC-123        (from git branch)     |
+| runner        codex                                 |
+| target-branch u1                                    |
+| service       acquiring                             |
+| namespace     auto                                  |
+| tags          acquiring-service, go                |
+|   dataset     s4-3ds                               |
+| roles         architect -> qa_stand                 |
++----------------------------------------------------+
 ```
 
 - **task-id** — подставляется автоматически из ветки (`MRC-123-my-feature` → `MRC-123`). Если указан — загружается контекст из Jira. Можно очистить чтобы пропустить Jira.
 - **target-branch** — стенд для деплоя. Если не указан — пайплайн останавливается на `qa_local`.
 - **tags** — список с множественным выбором. Параметры активных тегов появляются отдельными пунктами меню.
 - **first role / last role** — диапазон ограничен, невалидный выбрать нельзя.
-- **▶ Run** — появляется только когда `task` заполнен.
+- **Run** — появляется только когда `task` заполнен.
 
 ---
 
