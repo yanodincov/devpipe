@@ -194,6 +194,344 @@ params:
 
 ---
 
+## Профили (pipeline.yml)
+
+Профили определяют структуру пайплайна: входные параметры, стадии выполнения и роутинг между ними. Профили хранятся в `.devpipe/profiles/<name>/pipeline.yml`.
+
+### Структура профиля
+
+```yaml
+version: 1
+name: my-pipeline
+
+defaults:
+  runner: auto
+  model: middle
+  effort: middle
+
+inputs:
+  task:
+    type: string
+    required: true
+    default: ""
+    custom: true
+  count:
+    type: int
+    default: 1
+    values: [1, 2, 3]
+    custom: false
+
+stages:
+  build:
+    runner: codex
+    model: high
+    effort: middle
+    retry_limit: 2
+    agent:
+      folder: builder
+    in:
+      task: input.task
+      config: context.config
+    out:
+      artifacts:
+        type: object
+
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: test
+          default: true
+    test:
+      next_stages:
+        - stage: completed
+          default: true
+```
+
+---
+
+### version
+
+Обязательное поле. Версия формата профиля. На данный момент поддерживается только `version: 1`.
+
+---
+
+### name
+
+Имя профиля. Используется для отображения и логирования.
+
+---
+
+### defaults
+
+Глобальные настройки по умолчанию для всех стадий.
+
+| Поле | Тип | Описание |
+|------|-----|----------|
+| `runner` | string | Раннер: `auto`, `codex`, `claude` |
+| `model` | string | Модель: `auto`, `low`, `middle`, `medium`, `high` |
+| `effort` | string | Усилия: `auto`, `low`, `middle`, `medium`, `high` |
+
+---
+
+### inputs
+
+Входные параметры пайплайна. Определяют поля, которые пользователь заполняет в TUI перед запуском.
+
+```yaml
+inputs:
+  my_field:
+    type: string          # string, int, bool, object, array
+    required: true        # обязательное поле
+    default: ""           # значение по умолчанию
+    values: [a, b, c]     # допустимые значения (опционально)
+    multi: false          # множественный выбор (опционально)
+    custom: true          # разрешить произвольные значения (опционально)
+```
+
+#### Типы полей
+
+| Тип | Описание |
+|-----|----------|
+| `string` | Строка |
+| `int` | Целое число |
+| `bool` | Булево значение (`true`/`false`) |
+| `object` | JSON-объект |
+| `array` | Массив |
+
+#### Валидация входных полей
+
+- `required: true` — поле обязательно для заполнения
+- `default` — если `custom: false` и есть `values`, значение должно быть из списка
+- `multi: false` — `default` не может быть списком `[]`
+- `multi: true` — `default` должен быть списком (пустым или с значениями из `values`)
+- Имена `runner`, `profile`, `first_role`, `last_role`, `model`, `effort` зарезервированы
+
+#### Примеры
+
+```yaml
+# Простое строковое поле с произвольным вводом
+task:
+  type: string
+  required: true
+  default: ""
+  custom: true
+
+# Выбор из списка
+environment:
+  type: string
+  default: "dev"
+  values: ["dev", "staging", "prod"]
+  custom: false
+
+# Множественный выбор
+services:
+  type: string
+  multi: true
+  default: []
+  values: ["api", "web", "worker"]
+  custom: true
+
+# Целое число
+count:
+  type: int
+  default: 1
+  values: [1, 2, 3, 5]
+  custom: true
+
+# Булево значение
+dry_run:
+  type: bool
+  default: false
+```
+
+---
+
+### stages
+
+Определяет стадии выполнения пайплайна. Каждая стадия — это запуск AI-агента с определённым промптом.
+
+```yaml
+stages:
+  <stage_name>:
+    runner: codex            # раннер (auto, codex, claude)
+    model: high              # модель (auto, low, middle, medium, high)
+    effort: middle           # усилия (auto, low, middle, medium, high)
+    retry_limit: 2           # лимит повторных попыток (>= 0, целое число)
+    tags: [go, backend]      # теги для правил (опционально)
+    agent:                   # спецификация агента
+      folder: builder        # имя папки в agents/ (опционально)
+      # ИЛИ
+      prompt: path/to/prompt.md
+      schema: path/to/schema.json
+    in:                      # входные данные
+      task: input.task
+      artifacts: stage.build.out.artifacts
+    out:                     # выходные данные
+      result:
+        type: object
+```
+
+#### Поля стадии
+
+| Поле | Тип | Обязательное | Описание |
+|------|-----|--------------|----------|
+| `runner` | string | да | Раннер: `auto`, `codex`, `claude` |
+| `model` | string | нет | Модель: `auto`, `low`, `middle`, `medium`, `high` |
+| `effort` | string | нет | Усилия: `auto`, `low`, `middle`, `medium`, `high` |
+| `retry_limit` | int | нет | Лимит повторов (>= 0, целое). По умолчанию 1 |
+| `tags` | list | нет | Список тегов для правил |
+| `agent` | object | нет | Спецификация агента (см. ниже) |
+| `in` | dict | нет | Входные привязки |
+| `out` | dict | нет | Выходные поля |
+
+#### Спецификация агента (agent)
+
+Агент определяет промпт и схему выходных данных. Два формата:
+
+**Формат 1: folder** — загружает файлы из `agents/<folder>/`
+```yaml
+agent:
+  folder: builder    # ищет agents/builder/prompt.md и agents/builder/output.schema.json
+```
+
+**Формат 2: prompt + schema** — явные пути к файлам
+```yaml
+agent:
+  prompt: agents/builder/prompt.md
+  schema: agents/builder/output.schema.json
+```
+
+Валидация:
+- Обязательны либо `folder`, либо оба `prompt` и `schema`
+- Файлы должны существовать
+- `output.schema.json` должен быть валидным JSON
+
+#### Входные привязки (in)
+
+Связывают входные данные стадии с источниками:
+
+```yaml
+in:
+  task: input.task                              # из inputs
+  config: context.config                        # из контекста
+  artifacts: stage.build.out.artifacts          # из выхода другой стадии
+  branch: runtime.git.current_branch             # из runtime
+```
+
+Форматы:
+- `input.<field>` — значение из inputs
+- `context.<field>` — значение из контекста
+- `stage.<name>.out.<field>` — выходное поле другой стадии
+- `runtime.<source>.<field>` — runtime-значение
+- `integration.<service>.<field>` — интеграционные данные
+
+Условные выражения:
+```yaml
+plan: stage.fix.out.updated_plan if stage.fix.out.changes_made else stage.init.out.initial_plan
+```
+
+#### Выходные поля (out)
+
+Определяют структуру выходных данных стадии:
+
+```yaml
+out:
+  result:
+    type: object
+    properties:
+      status:
+        type: string
+      count:
+        type: int
+```
+
+Рекомендуется определять `properties` для типа `object`.
+
+---
+
+### routing
+
+Определяет порядок выполнения стадий и переходы между ними.
+
+```yaml
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: test
+          default: true
+    test:
+      next_stages:
+        - stage: deploy
+          all:
+            - field: out.passed
+              op: eq
+              value: true
+        - stage: failed
+          default: true
+```
+
+#### start_stage
+
+Обязательное поле. Имя первой стадии пайплайна.
+
+#### by_stage
+
+Определяет переходы для каждой стадии. Каждая стадия может иметь несколько возможных следующих стадий с условиями.
+
+```yaml
+by_stage:
+  <stage_name>:
+    next_stages:
+      - stage: <target_stage>
+        default: true      # переход по умолчанию
+      - stage: <target>
+        all: [...]         # переход если ALL условия истинны
+      - stage: <target>
+        any: [...]         # переход если ANY условие истинно
+```
+
+#### Условия перехода
+
+Каждое условие проверяет поле выхода текущей стадии:
+
+```yaml
+all:
+  - field: out.passed
+    op: eq
+    value: true
+  - field: out.count
+    op: gt
+    value: 0
+```
+
+| Оператор | Описание |
+|---------|----------|
+| `eq` | равно |
+| `ne` | не равно |
+| `gt` | больше |
+| `gte` | больше или равно |
+| `lt` | меньше |
+| `lte` | меньше или равно |
+| `in` | значение в списке |
+| `contains` | строка содержит значение |
+
+В условиях можно ссылаться на:
+- `out.<field>` — выходное поле текущей стадии
+- `input.<field>` — входной параметр пайплайна
+
+#### Системные стадии
+
+- `completed` — успешное завершение пайплайна
+- `failed` — ошибка выполнения
+
+Обязательно должен быть путь от `start_stage` до `completed`.
+
+---
+
 ## Пример: acquiring
 
 ```
