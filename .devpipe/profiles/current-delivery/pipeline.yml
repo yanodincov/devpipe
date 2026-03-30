@@ -26,7 +26,7 @@ inputs:
   service:
     type: string
     required: false
-    default: ""
+    default: []
     multi: true
     custom: true
     values: [
