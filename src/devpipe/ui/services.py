@@ -18,7 +18,7 @@ from devpipe.tags import collect_params, load_available_tags, load_tag_definitio
 from devpipe.ui.state import FieldKind, FieldMeta
 from devpipe.profiles.loader import ProfileDefinition, _find_pipeline_path
 from devpipe.profiles.stages import InputType
-from devpipe.profiles.validation import validate_pipeline_file, format_validation_errors
+from devpipe.profiles.validator import validate_pipeline_file, format_validation_errors
 
 
 def _git_branch(project_root: Path | None = None) -> str:
