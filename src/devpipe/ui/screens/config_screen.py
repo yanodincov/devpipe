@@ -37,6 +37,7 @@ class ConfigScreen(Screen):
         Binding("up", "nav_up", "Up", show=False),
         Binding("down", "nav_down", "Down", show=False),
         Binding("enter", "activate", "Edit/Confirm", show=False),
+        Binding("space", "toggle_tag", "Toggle tag", show=False),
         Binding("escape", "cancel", "Cancel/Back", show=False),
         Binding("ctrl+h", "open_history", "History", show=True),
         Binding("ctrl+r", "run_pipeline", "Run Pipeline", show=True),
@@ -71,7 +72,7 @@ class ConfigScreen(Screen):
         nav = self.query_one("#nav-list", NavList)
         detail = self.query_one("#detail-panel", DetailPanel)
         status = self.query_one("#status-bar", StatusBar)
-
+        
         nav.set_items(self._state.nav_items)
         nav.selected_index = self._state.selected_nav_index
 
@@ -183,7 +184,12 @@ class ConfigScreen(Screen):
             self._state = set_field_value(self._state, item.key, value)
             self._sync_app_state()
             self._editing = False
-            if item.key in {"first_role", "last_role", "tags"}:
+            
+            # Profile change needs special handling
+            if item.key == "profile":
+                self.app.post_message(self.ProfileChanged(str(value)))
+                return
+            elif item.key in {"first_role", "last_role", "tags"}:
                 self.app.post_message(self.DerivedInputsChanged())
             self._update_display()
             return
@@ -199,9 +205,15 @@ class ConfigScreen(Screen):
         self._sync_app_state()
         self._editing = False
 
-        # Special: profile change triggers reload
+        # Special: profile change triggers reload - don't update display here,
+        # the message handler will update it with the new state
         if item.key == "profile":
+            import datetime
+            with open('/tmp/devpipe_debug.log', 'a') as f:
+                f.write(f"\n[{datetime.datetime.now()}] _confirm_edit posting ProfileChanged\n")
+                f.write(f"  new profile={value}\n")
             self.app.post_message(self.ProfileChanged(str(value)))
+            return
         elif item.key in {"first_role", "last_role", "tags"}:
             self.app.post_message(self.DerivedInputsChanged())
 
@@ -232,8 +244,22 @@ class ConfigScreen(Screen):
 
     def action_cancel(self) -> None:
         if self._editing:
-            self._editing = False
-            self._show_current_summary()
+            detail = self.query_one("#detail-panel", DetailPanel)
+            # If in tag_roles editor and in edit_roles submode, exit submode first
+            if detail.editor_mode == "tag_roles" and detail.editor_submode == "edit_roles":
+                detail.cancel_submode()
+            else:
+                # For tag_roles editor in main mode, apply changes before exiting
+                if detail.editor_mode == "tag_roles" and detail.editor_submode == "":
+                    item = self._state.selected_nav_item
+                    if item:
+                        value = detail.editor_current_value()
+                        self._state = set_field_value(self._state, item.key, value)
+                        self._sync_app_state()
+                        if item.key == "tags":
+                            self.app.post_message(self.DerivedInputsChanged())
+                self._editing = False
+                self._show_current_summary()
         else:
             self.app.exit()
 
@@ -247,6 +273,13 @@ class ConfigScreen(Screen):
         if not self._state.form.is_ready:
             return
         self.app.post_message(self.RunRequested())
+
+    def action_toggle_tag(self) -> None:
+        """Toggle selection of current tag (in main tag list)."""
+        if self._editing:
+            detail = self.query_one("#detail-panel", DetailPanel)
+            if detail.editor_mode == "tag_roles" and detail.editor_submode == "":
+                detail.toggle_current_tag()
 
     # ── Messages ──────────────────────────────────────────────────────────
 

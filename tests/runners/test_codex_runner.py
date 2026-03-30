@@ -5,7 +5,7 @@ import subprocess
 
 import pytest
 
-from devpipe.roles.envelope import TaskEnvelope
+from devpipe.profiles.agent import TaskEnvelope
 from devpipe.runners.codex import CodexRunner
 from devpipe.runners.base import InvalidRunnerOutputError, RunnerTimeoutError
 

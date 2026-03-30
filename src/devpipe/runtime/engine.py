@@ -9,8 +9,15 @@ from devpipe.runtime.state import PipelineState
 
 
 class PipelineEngine:
-    def __init__(self, retry_policy: RetryPolicy | None = None) -> None:
+    def __init__(
+        self,
+        retry_policy: RetryPolicy | None = None,
+        get_first_stage: "Callable[[], str] | None" = None,
+        get_next_stage: "Callable[[str], str] | None" = None,
+    ) -> None:
         self.retry_policy = retry_policy or RetryPolicy.default()
+        self.get_first_stage = get_first_stage or (lambda: first_stage())
+        self.get_next_stage = get_next_stage or (lambda current: next_stage(current))
 
     def apply(self, state: PipelineState, event: Event) -> PipelineState:
         new_state = deepcopy(state)
@@ -20,13 +27,13 @@ class PipelineEngine:
 
         if event.event_type == EventType.RUN_STARTED:
             new_state.status = "running"
-            new_state.current_stage = first_stage()
+            new_state.current_stage = self.get_first_stage()
             return new_state
 
         if event.event_type == EventType.STAGE_COMPLETED:
             if event.stage:
                 new_state.artifacts.setdefault("stage_summaries", {})[event.stage] = event.summary
-            upcoming = next_stage(event.stage or new_state.current_stage)
+            upcoming = self.get_next_stage(event.stage or new_state.current_stage)
             if upcoming == "completed":
                 new_state.status = "completed"
                 new_state.current_stage = "completed"

@@ -39,10 +39,10 @@ class TestInputSpec:
         assert isinstance(spec.default, list)
 
     def test_single_multi_false_requires_scalar_default(self):
-        """Test multi=false requires scalar default."""
-        with pytest.raises(ValidationError) as exc_info:
-            InputSpec(type="string", default=["a", "b"], multi=False, custom=True)
-        assert "multi=False requires scalar default" in str(exc_info.value)
+        """Test multi=false with list default gets auto-fixed to empty string."""
+        spec = InputSpec(type="string", default=["a", "b"], multi=False, custom=True)
+        # Auto-fix: list default for non-multi field is converted to empty string
+        assert spec.default == ""
 
     def test_custom_false_requires_value_in_values(self):
         """Test custom=false requires runtime value from values list."""

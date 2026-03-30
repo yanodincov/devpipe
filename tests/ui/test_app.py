@@ -179,8 +179,8 @@ def test_ensure_runtime_app_uses_devpipe_bundle_when_project_has_no_runner_confi
 
     runtime_app = app._ensure_runtime_app()
 
-    assert "architect" in runtime_app.roles
     assert "codex" in runtime_app.runners
+    assert "claude" in runtime_app.runners
 
 
 def test_exit_cancels_active_run_and_waits_for_worker(tmp_path, monkeypatch):

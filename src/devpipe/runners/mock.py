@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 
-from devpipe.roles.envelope import TaskEnvelope, TaskResult
+from devpipe.profiles.agent import TaskEnvelope, TaskResult
 
 _STUBS: dict[str, dict] = {
     "architect": {

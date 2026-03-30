@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import subprocess
 
-from devpipe.roles.envelope import TaskEnvelope
+from devpipe.profiles.agent import TaskEnvelope
 from devpipe.runners.claude import ClaudeRunner
 
 

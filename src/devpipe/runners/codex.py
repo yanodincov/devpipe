@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import os
 
-from devpipe.roles.envelope import TaskEnvelope, TaskResult
-from devpipe.roles.parser import OutputParseError, OutputParser
+from devpipe.profiles.agent import TaskEnvelope, TaskResult
+from devpipe.parser_legacy import OutputParseError, OutputParser
 from devpipe.runners.base import (
     BaseCliRunner,
     CommandFailedError,

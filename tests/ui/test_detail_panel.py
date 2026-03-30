@@ -30,6 +30,7 @@ def _form() -> FormState:
                 options=["u1", "u1-1"],
                 description="Release namespace",
                 section="custom",
+                custom=True,
             ),
             FieldMeta(
                 key="tags",
@@ -38,6 +39,7 @@ def _form() -> FormState:
                 options=["go", "acquiring-service"],
                 description="Pipeline tags",
                 section="custom",
+                custom=True,
             ),
         ],
         profile="legacy",
@@ -57,8 +59,8 @@ def test_custom_field_summary_keeps_full_task_context() -> None:
     assert "Runner: codex" in rendered
     assert "Model: auto" in rendered
     assert "Effort: auto" in rendered
-    assert "Start Stage: architect" in rendered
-    assert "Finish Stage: qa_stand" in rendered
+    assert "Start Agent: architect" in rendered
+    assert "Finish Agent: qa_stand" in rendered
     assert "Namespace: u1-custom" in rendered
     assert "Release namespace" in rendered
     assert "Type:" not in rendered
@@ -73,7 +75,6 @@ def test_standard_field_summary_shows_field_details() -> None:
 
     rendered = panel.render().plain
     assert "Field Details" not in rendered
-    assert "Current: codex" in rendered
     assert "Runner selection mode" in rendered
     assert "Type:" not in rendered
     assert "Options:" not in rendered
@@ -97,13 +98,13 @@ def test_text_editor_mode_shows_field_details() -> None:
     panel.begin_edit(item, _form())
 
     rendered = panel.render().plain
-    assert "Editing: Task" in rendered
+    assert "Editing:" not in rendered
     assert "Field Details" not in rendered
-    assert "Task text passed to the pipeline" in rendered
+    assert "Task text passed to the pipeline" not in rendered
     assert "Type:" not in rendered
     assert "Options:" not in rendered
-    assert "Editing: Task\n\n\n  Current: Ship feature" in rendered
-    assert "Task text passed to the pipeline\n\n\nEnter" in rendered
+    assert "Current:" not in rendered
+    assert "Enter" not in rendered
 
 
 def test_action_summary_keeps_current_task_context() -> None:
@@ -134,7 +135,7 @@ def test_begin_edit_model_uses_single_choice_editor() -> None:
     assert "Options:" not in panel.render().plain
 
 
-def test_single_choice_current_shows_saved_value_not_hovered_option() -> None:
+def test_single_choice_has_correct_option_marked() -> None:
     panel = DetailPanel()
     form = _form()
     item = NavItem(key="model", label="Model", section=NavSection.STANDARD)
@@ -144,7 +145,8 @@ def test_single_choice_current_shows_saved_value_not_hovered_option() -> None:
     panel.move_editor_down()
 
     rendered = panel.render().plain
-    assert "Current: auto" in rendered
+    assert "● middle" in rendered
+    assert "○ auto" in rendered
 
 
 def test_single_choice_activate_updates_committed_value() -> None:
@@ -156,8 +158,7 @@ def test_single_choice_activate_updates_committed_value() -> None:
     panel.move_editor_down()
     assert panel.editor_activate() == "confirm"
 
-    rendered = panel.render().plain
-    assert "Current: developer" in rendered
+    assert panel.editor_current_value() == "developer"
 
 
 def test_begin_edit_namespace_uses_single_choice_editor_with_custom_values() -> None:
@@ -284,7 +285,7 @@ def test_inline_input_css_adds_vertical_spacing_and_removes_blue_focus_border() 
     assert "border: tall #6b7280;" in css
 
 
-def test_attached_text_editor_mounts_copy_blocks_around_input() -> None:
+def test_attached_text_editor_mounts_input_only() -> None:
     class DetailPanelApp(App[None]):
         def compose(self) -> ComposeResult:
             yield DetailPanel(id="panel")
@@ -297,13 +298,7 @@ def test_attached_text_editor_mounts_copy_blocks_around_input() -> None:
             await pilot.pause()
 
             children = list(panel.children)
-            assert len(children) == 3
-            assert isinstance(children[0], Static)
-            assert isinstance(children[1], Input)
-            assert isinstance(children[2], Static)
-            assert "Current: Ship feature" in children[0].render().plain
-            assert "Task text passed to the pipeline" in children[0].render().plain
-            assert "Enter — confirm" in children[2].render().plain
-            assert "Current: Ship feature" not in children[2].render().plain
+            assert len(children) == 1
+            assert isinstance(children[0], Input)
 
     asyncio.run(run())

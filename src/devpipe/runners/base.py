@@ -12,8 +12,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable, Protocol
 
-from devpipe.roles.envelope import TaskEnvelope, TaskResult
-from devpipe.roles.parser import OutputParseError, OutputParser
+from devpipe.profiles.agent import TaskEnvelope, TaskResult
+from devpipe.parser_legacy import OutputParseError, OutputParser
 
 
 class RunnerError(RuntimeError):

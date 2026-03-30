@@ -5,12 +5,12 @@ from dataclasses import dataclass
 from pathlib import Path
 import threading
 
-from devpipe.roles.envelope import build_envelope
-from devpipe.roles.loader import RoleDefinition, load_roles
+from devpipe.profiles.agent import build_stage_envelope
+from devpipe.profiles.loader import ProfileDefinition, load_profile
 from devpipe.runtime.engine import PipelineEngine
 from devpipe.runtime.events import Event, EventType
 from devpipe.runtime.retry import RetryPolicy
-from devpipe.runtime.state import STAGE_ORDER, PipelineState
+from devpipe.runtime.state import PipelineState
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.codex import CodexRunner
 from devpipe.runners.profile_map import (
@@ -26,15 +26,17 @@ from devpipe.storage.run_logger import RunLogger
 
 @dataclass
 class RunConfig:
-    task_id: str | None
     task: str
     runner: str
+    profile: str = ""
+    task_id: str | None = None
     model: str | None = None
     effort: str | None = None
     target_branch: str | None = None
     namespace: str | None = None
     service: str | None = None
     tags: list[str] | None = None
+    tag_roles: dict[str, list[str]] | None = None  # NEW: per-tag role activation
     extra_params: dict[str, str | list[str]] | None = None
     first_role: str | None = None
     last_role: str | None = None
@@ -43,7 +45,6 @@ class RunConfig:
 class OrchestratorApp:
     def __init__(
         self,
-        roles: dict[str, RoleDefinition],
         runners: dict[str, object],
         runs_dir: str | Path,
         jira_adapter=None,
@@ -54,14 +55,13 @@ class OrchestratorApp:
         project_root: str | Path | None = None,
         runner_profiles: RunnerProfiles | None = None,
     ) -> None:
-        self.roles = roles
         self.runners = runners
         self.runs_dir = Path(runs_dir)
         self.jira_adapter = jira_adapter
         self.git_adapter = git_adapter
         self.github_adapter = github_adapter
         self.kubernetes_adapter = kubernetes_adapter
-        self.engine = PipelineEngine(retry_policy=retry_policy)
+        self.base_retry_policy = retry_policy or RetryPolicy.default()
         self.project_root = Path(project_root) if project_root is not None else None
         self.runner_profiles = runner_profiles or {}
         self._cancel_requested = threading.Event()
@@ -72,50 +72,130 @@ class OrchestratorApp:
         on_stage_start: "Callable[[str, str, str, str], None] | None" = None,
         on_stage_complete: "Callable[[str, dict], None] | None" = None,
     ) -> PipelineState:
-        from devpipe.history import finish_run, save_run
-        save_run(config)
+        from datetime import datetime, timezone
+        from devpipe.history import RunHistoryEntry, StageRun, save_run_history
+        from devpipe.profiles.loader import get_stage_order_from_routing
+
         self._cancel_requested.clear()
 
-        first_role = config.first_role or STAGE_ORDER[0]
-        last_role = config.last_role or STAGE_ORDER[-1]
+        # Generate ISO timestamp run_id
+        run_id = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S.%f")
 
-        if first_role not in STAGE_ORDER:
-            raise ValueError(f"Unknown first_role: {first_role}")
-        if last_role not in STAGE_ORDER:
-            raise ValueError(f"Unknown last_role: {last_role}")
-        if STAGE_ORDER.index(first_role) > STAGE_ORDER.index(last_role):
-            raise ValueError(f"first_role '{first_role}' must come before last_role '{last_role}'")
+        # Load profile - if not specified, use default from project config
+        if not config.profile:
+            from devpipe.project_config import load_project_config
+            proj_cfg = load_project_config(self.project_root)
+            default_profile = proj_cfg.default("profile")
+            if not default_profile:
+                raise ValueError("No profile specified and no default profile configured")
+            config.profile = default_profile
+        profile = load_profile(config.profile, project_root=self.project_root)
+
+        # Determine stage ordering and transitions from routing
+        stage_order = get_stage_order_from_routing(profile.routing, profile.stages)
+        if not stage_order:
+            raise ValueError(f"Profile '{config.profile}' has no stages in routing")
+
+        # Build next_stage mapping from default rules
+        next_stage_map: dict[str, str] = {}
+        for stage_name, stage_routing in profile.routing.by_stage.items():
+            for rule in stage_routing.next_stages:
+                if rule.default:
+                    next_stage_map[stage_name] = rule.stage
+                    break
+            if stage_name not in next_stage_map and stage_routing.next_stages:
+                next_stage_map[stage_name] = stage_routing.next_stages[0].stage
+
+        # Determine first and last stages
+        first_stage = config.first_role if config.first_role else profile.routing.start_stage
+        last_stage = config.last_role if config.last_role else stage_order[-1]
+
+        if first_stage not in profile.stages:
+            raise ValueError(f"Unknown first_role: {first_stage}")
+        if last_stage not in profile.stages:
+            raise ValueError(f"Unknown last_role: {last_stage}")
+
+        # Compute engine's first_stage and get_next_stage functions
+        def get_first() -> str:
+            return first_stage
+
+        def get_next(current: str) -> str:
+            if current == last_stage:
+                return "completed"
+            return next_stage_map.get(current, "completed")
+
+        # Prepare retry policy with stage-specific limits from profile
+        stage_limits = {name: spec.retry_limit for name, spec in profile.stages.items()}
+        # Combine with base policy's stage_limits (overlay)
+        combined_limits = {**self.base_retry_policy.stage_limits, **stage_limits}
+        retry_policy = RetryPolicy(
+            default_limit=self.base_retry_policy.default_limit,
+            stage_limits=combined_limits,
+        )
+        engine = PipelineEngine(
+            retry_policy=retry_policy,
+            get_first_stage=get_first,
+            get_next_stage=get_next,
+        )
 
         task_id = config.task_id or "no-id"
-        state = PipelineState.create(task_id=task_id, task_text=config.task, selected_runner=config.runner)
+        state = PipelineState.create(
+            task_id=task_id,
+            task_text=config.task,
+            selected_runner=config.runner,
+            run_id=run_id,
+        )
         state.release_context.update({**(config.extra_params or {})})
 
         if self.jira_adapter is not None and config.task_id:
             state.shared_context["jira"] = self.jira_adapter.fetch_issue(config.task_id)
+
+        # History tracking
+        run_start_time = datetime.now(timezone.utc)
+        stage_runs: dict[str, dict] = {}
 
         logger = RunLogger(self.runs_dir, state.run_id)
         artifacts = ArtifactStore(logger.run_dir)
 
         event = Event(EventType.RUN_STARTED, payload={"task_id": task_id})
         logger.log_event(event)
-        state = self.engine.apply(state, event)
-        state.current_stage = first_role
+        state = engine.apply(state, event)
 
         try:
             while state.status not in {"completed", "failed", "cancelled"}:
                 if self._cancel_requested.is_set():
                     state.status = "cancelled"
                     break
-                role = self.roles[state.current_stage]
-                actual_runner_name = role.runner if config.runner == "auto" else config.runner
+
+                # Get stage specification
+                if state.current_stage not in profile.stages:
+                    raise ValueError(f"Stage '{state.current_stage}' not found in profile '{config.profile}'")
+                stage_spec = profile.stages[state.current_stage]
+
+                # Initialize stage tracking if this is first time entering this stage
+                stage_name = state.current_stage
+                if stage_name not in stage_runs:
+                    stage_runs[stage_name] = {
+                        "name": stage_name,
+                        "started_at": datetime.now(timezone.utc),
+                        "completed_at": None,
+                        "status": "running",
+                        "attempts": []
+                    }
+                stage_entry = stage_runs[stage_name]
+
+                # Determine runner and model/effort
+                actual_runner_name = stage_spec.runner if config.runner == "auto" else config.runner
                 runner = self.runners[actual_runner_name]
                 state.selected_runner = actual_runner_name
-                model_level = role.model if config.model in {None, "", "auto"} else config.model
-                effort_level = role.effort if config.effort in {None, "", "auto"} else config.effort
+                model_level = stage_spec.model if config.model in {None, "", "auto"} else config.model
+                effort_level = stage_spec.effort if config.effort in {None, "", "auto"} else config.effort
                 resolved_model = resolve_model(self.runner_profiles, actual_runner_name, model_level)
                 resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
                 runner.model_name = resolved_model
                 runner.effort = resolved_effort
+
+                # Build context
                 stage_context: dict[str, object] = {"config": config.__dict__}
                 if state.current_stage == "release":
                     if not config.target_branch:
@@ -133,29 +213,53 @@ class OrchestratorApp:
                         **(config.extra_params or {}),
                     }
 
-                envelope = build_envelope(
-                    role,
+                # Filter user tags by tag_roles for this stage
+                stage_name = stage_spec.name
+                user_tags_for_stage: list[str] = []
+                if config.tags:
+                    if config.tag_roles:
+                        for tag in config.tags:
+                            roles = config.tag_roles.get(tag, [])
+                            if stage_name in roles:
+                                user_tags_for_stage.append(tag)
+                    else:
+                        user_tags_for_stage = list(config.tags)
+
+                # Build envelope using stage agent
+                envelope = build_stage_envelope(
+                    stage_spec,
                     state,
                     model_name=resolved_model,
                     effort=resolved_effort,
                     extra_context=stage_context,
                     project_root=self.project_root,
-                    tags=config.tags,
+                    tags=user_tags_for_stage,  # only user tags filtered by roles; stage_spec.tags handled inside
                 )
                 if on_stage_start is not None:
                     on_stage_start(state.current_stage, actual_runner_name, resolved_model, resolved_effort)
+
+                attempt_start = datetime.now(timezone.utc)
                 try:
                     result = runner.run(envelope)
                 except Exception as exc:
+                    attempt_end = datetime.now(timezone.utc)
+                    stage_entry["attempts"].append({
+                        "started_at": attempt_start,
+                        "completed_at": attempt_end,
+                        "status": "failed",
+                        "error_message": str(exc)
+                    })
                     if self._cancel_requested.is_set():
                         state.status = "cancelled"
                         logger.write_summary(state)
                         break
                     failure = Event(EventType.STAGE_FAILED, stage=state.current_stage, error_message=str(exc))
                     logger.log_event(failure)
-                    state = self.engine.apply(state, failure)
+                    state = engine.apply(state, failure)
                     logger.write_summary(state)
                     if state.status == "failed":
+                        stage_entry["completed_at"] = attempt_end
+                        stage_entry["status"] = "failed"
                         raise
                     continue
 
@@ -164,34 +268,84 @@ class OrchestratorApp:
                     logger.write_summary(state)
                     break
 
-                state.artifacts.setdefault("stage_outputs", {})[role.name] = result.structured_output
-                transcript_path = logger.log_stage_transcript(role.name, result.transcript)
-                artifacts.write_stage_artifacts(role.name, result.structured_output)
-                state.shared_context[f"{role.name}_log"] = str(transcript_path)
+                # Record successful attempt and mark stage complete
+                attempt_end = datetime.now(timezone.utc)
+                stage_entry["attempts"].append({
+                    "started_at": attempt_start,
+                    "completed_at": attempt_end,
+                    "status": "completed",
+                    "output": result.structured_output
+                })
+                stage_entry["output"] = result.structured_output
+                stage_entry["completed_at"] = attempt_end
+                stage_entry["status"] = "completed"
+
+                state.artifacts.setdefault("stage_outputs", {})[stage_spec.name] = result.structured_output
+                transcript_path = logger.log_stage_transcript(stage_spec.name, result.transcript)
+                artifacts.write_stage_artifacts(stage_spec.name, result.structured_output)
+                state.shared_context[f"{stage_spec.name}_log"] = str(transcript_path)
 
                 if on_stage_complete is not None:
-                    on_stage_complete(role.name, result.structured_output)
+                    on_stage_complete(stage_spec.name, result.structured_output)
 
-                success = Event(EventType.STAGE_COMPLETED, stage=role.name, summary=result.summary)
+                success = Event(EventType.STAGE_COMPLETED, stage=stage_spec.name, summary=result.summary)
                 logger.log_event(success)
-                state = self.engine.apply(state, success)
+                state = engine.apply(state, success)
                 logger.write_summary(state)
 
-                if role.name == last_role and state.status not in {"completed", "failed"}:
+                if stage_spec.name == last_stage and state.status not in {"completed", "failed"}:
                     state.status = "completed"
                     state.current_stage = "completed"
                     logger.write_summary(state)
 
-                if role.name == "release" and self.github_adapter is not None:
+                if stage_spec.name == "release" and self.github_adapter is not None:
                     self.github_adapter.ensure_workflow_success(state.run_id)
         finally:
             logger.write_summary(state)
-            finish_run(config)
+            # Finalize any running stages with current status
+            run_end_time = datetime.now(timezone.utc)
+            for entry in stage_runs.values():
+                if entry["status"] == "running":
+                    entry["completed_at"] = run_end_time
+                    entry["status"] = state.status  # cancelled, failed, or maybe completed from outside?
+
+            # Build summary
+            total_duration = (run_end_time - run_start_time).total_seconds()
+            stages_completed = sum(1 for e in stage_runs.values() if e["status"] == "completed")
+            stages_failed = sum(1 for e in stage_runs.values() if e["status"] == "failed")
+            summary = {
+                "total_duration_seconds": round(total_duration, 3),
+                "stages_completed": stages_completed,
+                "stages_failed": stages_failed,
+                "final_status": state.status,
+            }
+
+            # Convert stage_runs dict to ordered list of StageRun objects
+            ordered_stage_dicts = [stage_runs[name] for name in stage_order if name in stage_runs]
+            stage_run_objects = [
+                StageRun(
+                    name=s["name"],
+                    started_at=s["started_at"],
+                    completed_at=s["completed_at"],
+                    status=s["status"],
+                    output=s.get("output", {}),
+                    attempts=s["attempts"],
+                )
+                for s in ordered_stage_dicts
+            ]
+
+            entry = RunHistoryEntry(
+                run_id=run_id,
+                timestamp=run_start_time,
+                profile=config.profile,
+                config=config.__dict__,
+                stages=stage_run_objects,
+                summary=summary,
+            )
+            history_runs_dir = self.project_root / ".devpipe" / "runs"
+            save_run_history(entry, history_runs_dir)
 
         return state
-
-    def inspect_roles(self) -> list[str]:
-        return sorted(self.roles)
 
     def cancel_active_runs(self) -> None:
         self._cancel_requested.set()
@@ -207,7 +361,6 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
     raw_config = config_store.load()
     runner_config = raw_config.get("runners", {})
     runner_profiles = load_runner_profiles(raw_config)
-    roles = load_roles(base / "roles")
 
     codex_config = runner_config.get("codex", {})
     claude_config = runner_config.get("claude", {})
@@ -223,7 +376,6 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
     }
 
     return OrchestratorApp(
-        roles=roles,
         runners=runners,
         runs_dir=base / "runs",
         project_root=Path.cwd(),

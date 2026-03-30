@@ -6,8 +6,10 @@ No Textual or I/O here.
 from __future__ import annotations
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 
+from devpipe.history import RunHistoryEntry
 from devpipe.ui.state import (
     FieldEditorState,
     FieldKind,
@@ -29,6 +31,9 @@ def load_defaults(
     available_stages: list[str],
     fields: list[FieldMeta],
     defaults: dict[str, Any],
+    available_tags: list[str] | None = None,
+    profile_errors: list[str] | None = None,
+    routing_graph: dict[str, set[str]] | None = None,
 ) -> UIState:
     """Initialize form with profile metadata and default values."""
     new = deepcopy(state)
@@ -37,6 +42,10 @@ def load_defaults(
     new.form.available_stages = available_stages
     new.form.fields = fields
     new.form.values = dict(defaults)
+    if available_tags is not None:
+        new.form.available_tags = available_tags
+    new.form.profile_errors = profile_errors or []
+    new.form.routing_graph = routing_graph if routing_graph is not None else {}
 
     # Ensure standard field defaults
     new.form.values.setdefault("profile", profile)
@@ -45,7 +54,7 @@ def load_defaults(
     new.form.values.setdefault("model", "auto")
     new.form.values.setdefault("effort", "auto")
     new.form.values.setdefault("first_role", available_stages[0] if available_stages else "")
-    new.form.values.setdefault("last_role", available_stages[-1] if available_stages else "")
+    new.form.values.setdefault("last_role", "")  # Empty by default
 
     new.nav_items = build_nav_items(new.form)
     new.status_bar = derive_status_bar(new.form)
@@ -68,38 +77,41 @@ def select_profile(
     fields: list[FieldMeta],
     defaults: dict[str, Any],
     available_stages: list[str],
+    profile_errors: list[str] | None = None,
+    routing_graph: dict[str, set[str]] | None = None,
 ) -> UIState:
-    """Switch profile — resets custom fields, keeps standard values where valid."""
+    """Switch profile — completely replace fields and defaults, preserve only compatible values."""
     new = deepcopy(state)
     old_values = new.form.values.copy()
 
     new.form.profile = profile
     new.form.fields = fields
     new.form.available_stages = available_stages
+    new.form.profile_errors = profile_errors or []
+    new.form.routing_graph = routing_graph if routing_graph is not None else {}
 
-    # Keep standard values that are still valid
-    new.form.values = dict(defaults)
-    new.form.values["profile"] = profile
+    # Start with defaults from profile
+    new_values = dict(defaults)
+    new_values["profile"] = profile
+
+    # Preserve only global preferences (non-custom, profile-agnostic) across profiles
     for key in ("task", "runner", "model", "effort"):
         if key in old_values:
-            new.form.values[key] = old_values[key]
+            new_values[key] = old_values[key]
 
-    # Validate first_role / last_role against new stages
-    old_first = old_values.get("first_role", "")
-    old_last = old_values.get("last_role", "")
-    if old_first in available_stages:
-        new.form.values["first_role"] = old_first
+    # Always reset first_role and last_role to bounds of new profile
+    if available_stages:
+        new_values["first_role"] = available_stages[0]
+        new_values["last_role"] = ""  # Empty by default, must be explicitly set
     else:
-        new.form.values["first_role"] = available_stages[0] if available_stages else ""
-    if old_last in available_stages:
-        new.form.values["last_role"] = old_last
-    else:
-        new.form.values["last_role"] = available_stages[-1] if available_stages else ""
+        new_values["first_role"] = ""
+        new_values["last_role"] = ""
 
     # Validate runner
-    if new.form.values.get("runner") not in new.form.available_runners:
-        new.form.values["runner"] = "auto"
+    if new_values.get("runner") not in new.form.available_runners:
+        new_values["runner"] = "auto"
 
+    new.form.values = new_values
     new.nav_items = build_nav_items(new.form)
     new.status_bar = derive_status_bar(new.form)
     new.editor = FieldEditorState()
@@ -159,9 +171,18 @@ def apply_inline_edit(state: UIState) -> UIState:
     return new
 
 
-def apply_history_entry(state: UIState, entry: dict[str, Any]) -> UIState:
+def apply_history_entry(state: UIState, entry: RunHistoryEntry | dict) -> UIState:
     """Load values from a history entry into the form."""
+    from devpipe.history import RunHistoryEntry
+    from devpipe.tags import load_available_tags
+
     new = deepcopy(state)
+
+    # Extract config dict if entry is RunHistoryEntry, else assume dict-like
+    if isinstance(entry, RunHistoryEntry):
+        config = entry.config
+    else:
+        config = entry
 
     field_mapping = {
         "task": "task",
@@ -172,17 +193,36 @@ def apply_history_entry(state: UIState, entry: dict[str, Any]) -> UIState:
         "target_branch": "target_branch",
         "service": "service",
         "namespace": "namespace",
-        "tags": "tags",
         "first_role": "first_role",
         "last_role": "last_role",
     }
 
     for hist_key, form_key in field_mapping.items():
-        if hist_key in entry:
-            new.form.values[form_key] = entry[hist_key]
+        if hist_key in config:
+            new.form.values[form_key] = config[hist_key]
+
+    # Handle tags: prefer tag_roles dict; if legacy tags list, convert using available tags
+    tag_roles = config.get("tag_roles")
+    if tag_roles and isinstance(tag_roles, dict):
+        new.form.values["tags"] = tag_roles
+    else:
+        tags_list = config.get("tags", [])
+        if tags_list:
+            # Convert list to dict with all available roles for each tag
+            cwd = Path.cwd()  # FIXME: use project root from state? but we don't have it here
+            available_tags = load_available_tags(cwd)
+            converted: dict[str, list[str]] = {}
+            for tag in tags_list:
+                if tag in available_tags:
+                    roles = sorted(available_tags[tag].params_by_role.keys())
+                    if roles:
+                        converted[tag] = roles
+            new.form.values["tags"] = converted
+        else:
+            new.form.values["tags"] = {}
 
     # Merge extra params
-    extra = entry.get("extra_params", {})
+    extra = config.get("extra_params", {})
     for k, v in extra.items():
         new.form.values[k] = v
 
@@ -194,8 +234,11 @@ def apply_history_entry(state: UIState, entry: dict[str, Any]) -> UIState:
     stages = new.form.available_stages
     if new.form.values.get("first_role") not in stages:
         new.form.values["first_role"] = stages[0] if stages else ""
-    if new.form.values.get("last_role") not in stages:
-        new.form.values["last_role"] = stages[-1] if stages else ""
+    # last_role can be empty (means run until completed/failed)
+    last_val = new.form.values.get("last_role")
+    if last_val and last_val not in stages:
+        # Only reset if it's a non-empty invalid value
+        new.form.values["last_role"] = ""
 
     new.status_bar = derive_status_bar(new.form)
     new.editor = FieldEditorState()

@@ -22,8 +22,6 @@ inputs:
     type: bool
     required: false
     default: false
-    values: [true, false]
-    custom: false
   component:
     type: string
     required: false
@@ -34,7 +32,8 @@ inputs:
     required: false
     default: 3
     values: [1, 2, 3, 4, 5]
-    custom: false
+    custom: true
+
 
 stages:
   init:

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from devpipe.roles.parser import OutputParser, OutputParseError
+from devpipe.parser_legacy import OutputParser, OutputParseError
 
 
 def test_parser_extracts_json_from_fenced_block() -> None:

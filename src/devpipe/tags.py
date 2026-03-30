@@ -98,18 +98,31 @@ def load_tag_definitions(
 def collect_params(
     tag_definitions: dict[str, TagDefinition],
     project_tag_params: dict[str, dict],
-    active_roles: set[str] | None = None,
+    tag_roles: dict[str, set[str]] | set[str] | None = None,
 ) -> list[tuple[str, TagParam, list[str], str]]:
     """Returns list of (tag_name, param, available_values, default_value).
 
-    If active_roles is given, only params defined under those roles are included.
+    If tag_roles is given, only params defined under roles that are active for each tag are included.
+    tag_roles can be:
+    - None: all roles for each tag are active.
+    - dict[tag, set[role]]: per-tag active roles.
+    - set[role]: legacy active_roles applied to all tags.
     """
     seen: set[str] = set()
     result = []
     for tag_name, defn in tag_definitions.items():
         overrides = project_tag_params.get(tag_name, {})
+        # Determine which roles are active for this tag
+        if tag_roles is None:
+            active_roles_for_tag = set(defn.params_by_role.keys())
+        else:
+            if isinstance(tag_roles, dict):
+                active_roles_for_tag = tag_roles.get(tag_name, set())
+            else:
+                # Assume it's a set of roles (legacy active_roles)
+                active_roles_for_tag = tag_roles
         for role, params in defn.params_by_role.items():
-            if active_roles is not None and role not in active_roles:
+            if role not in active_roles_for_tag:
                 continue
             for param in params:
                 if param.key in seen:

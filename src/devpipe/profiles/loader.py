@@ -8,7 +8,7 @@ import sys
 import yaml
 from pydantic import ValidationError
 
-from devpipe.profiles.stages import ProfileStages, StageSpec, StageInBinding, StageOutField, FieldSpec
+from devpipe.profiles.stages import ProfileStages, StageSpec, StageInBinding, StageOutField, FieldSpec, AgentSpec, _parse_inputs_soft
 from devpipe.profiles.routing import RoutingSpec, StageRouting, RouteRule
 
 
@@ -39,6 +39,24 @@ def find_project_root(start_dir: Path | None = None) -> Path | None:
 class ProfileLoadError(Exception):
     """Error loading a profile."""
     pass
+
+
+def _find_pipeline_path(profile_name: str, project_root: Path) -> Path | None:
+    """Find the pipeline.yml file for a profile."""
+    search_dirs = [
+        project_root / ".devpipe" / "profiles" / profile_name,
+        Path.home() / ".devpipe" / "profiles" / profile_name,
+    ]
+    for profile_dir in search_dirs:
+        if not profile_dir.exists():
+            continue
+        yaml_path = profile_dir / "pipeline.yaml"
+        yml_path = profile_dir / "pipeline.yml"
+        if yaml_path.exists():
+            return yaml_path
+        if yml_path.exists():
+            return yml_path
+    return None
 
 
 @dataclass
@@ -86,7 +104,7 @@ def load_profile(
 
     Args:
         profile_name: Name of the profile to load
-        project_root: Project root directory (defaults to auto-detected from CWD)
+        project_root: Project root directory (defaults to CWD, which allows global profiles)
 
     Returns:
         ProfileDefinition with validated stages and routing
@@ -95,13 +113,7 @@ def load_profile(
         ProfileLoadError: If profile cannot be found or is invalid
     """
     if project_root is None:
-        detected_root = find_project_root()
-        if detected_root is None:
-            raise ProfileLoadError(
-                "Could not find project root (directory containing .devpipe/) "
-                "from current working directory. Specify project_root explicitly."
-            )
-        project_root = detected_root
+        project_root = Path.cwd()
 
     # Search locations:
     # 1. Project local: <project_root>/.devpipe/profiles/<profile_name>/pipeline.yaml or pipeline.yml
@@ -227,6 +239,55 @@ def _parse_profile_stages(
                     out_fields[field_name] = FieldSpec(type=field_spec)
             stage_data["out"] = StageOutField(fields=out_fields)
 
+        # Handle agent specification
+        if "agent" in stage_data:
+            agent_data = stage_data["agent"]
+            if isinstance(agent_data, str):
+                # Agent name - load from agents/ subdirectory
+                agent_dir = base_dir / "agents" / agent_data
+                prompt_path = agent_dir / "prompt.md"
+                schema_path = agent_dir / "output.schema.json"
+                prompt = prompt_path.read_text(encoding="utf-8") if prompt_path.exists() else ""
+                schema = {}
+                if schema_path.exists():
+                    import json
+                    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                stage_data["agent"] = AgentSpec(prompt=prompt, output_schema=schema)
+            elif isinstance(agent_data, dict):
+                # Inline agent definition - may contain file paths for prompt/schema
+                prompt_spec = agent_data.get("prompt")
+                schema_spec = agent_data.get("output_schema")
+                prompt = ""
+                schema = {}
+                if isinstance(prompt_spec, str):
+                    # Could be raw text or a file path
+                    prompt_path = base_dir / prompt_spec
+                    if prompt_path.exists() and prompt_path.is_file():
+                        prompt = prompt_path.read_text(encoding="utf-8")
+                    else:
+                        prompt = prompt_spec
+                if isinstance(schema_spec, str):
+                    # Could be JSON text or a file path
+                    schema_path = base_dir / schema_spec
+                    if schema_path.exists() and schema_path.is_file():
+                        import json
+                        schema = json.loads(schema_path.read_text(encoding="utf-8"))
+                    else:
+                        # Might be raw JSON string
+                        try:
+                            schema = json.loads(schema_spec)
+                        except json.JSONDecodeError:
+                            schema = {}
+                elif isinstance(schema_spec, dict):
+                    schema = schema_spec
+                # Merge with any other fields
+                stage_data["agent"] = AgentSpec(
+                    prompt=prompt,
+                    output_schema=schema,
+                    **{k: v for k, v in agent_data.items() if k not in ("prompt", "output_schema")}
+                )
+            # If agent is None or empty, it will be handled by the default
+
         # Create StageSpec
         stage = StageSpec(**stage_data)
         stages[stage_key] = stage
@@ -268,3 +329,36 @@ def _parse_routing(
 
     routing_spec = RoutingSpec(start_stage=start_stage, by_stage=by_stage)
     return routing_spec
+
+
+def get_stage_order_from_routing(routing: RoutingSpec, stages: dict[str, StageSpec]) -> list[str]:
+    """Extract an ordered list of stages from routing spec by following default transitions.
+
+    This is similar to the logic in ui/services._get_stage_order_from_routing but placed here
+    for core usage.
+    """
+    start = routing.start_stage
+    by_stage = routing.by_stage
+    ordered: list[str] = []
+    visited: set[str] = set()
+    current = start
+    while current and current not in {"completed", "failed"} and current not in visited:
+        visited.add(current)
+        ordered.append(current)
+        stage_routing = by_stage.get(current)
+        if not stage_routing:
+            break
+        # Find default rule
+        default_rule = None
+        for rule in stage_routing.next_stages:
+            if rule.default:
+                default_rule = rule
+                break
+        if default_rule is None:
+            # No default rule; pick first rule if any
+            if stage_routing.next_stages:
+                default_rule = stage_routing.next_stages[0]
+            else:
+                break
+        current = default_rule.stage
+    return ordered

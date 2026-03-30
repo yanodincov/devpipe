@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 
-from devpipe.roles.envelope import TaskEnvelope
+from devpipe.profiles.agent import TaskEnvelope
 from devpipe.runners.base import BaseCliRunner
 
 

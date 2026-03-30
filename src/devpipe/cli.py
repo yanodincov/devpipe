@@ -15,10 +15,8 @@ from devpipe.ui.app import DevpipeTextualApp
 
 def main() -> int:
     """Launch the devpipe Textual TUI."""
-    project_root = find_project_root()
-    if project_root is None:
-        print("Error: Could not find project root (directory containing .devpipe/).", file=sys.stderr)
-        return 1
+    # Try to find project root with .devpipe/, fallback to cwd for global profiles
+    project_root = find_project_root() or Path.cwd()
     app = DevpipeTextualApp(project_root=project_root)
     app.run()
     return 0

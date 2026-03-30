@@ -63,7 +63,7 @@ class TestLoadDefaults:
         assert state.form.values["model"] == "auto"
         assert state.form.values["effort"] == "auto"
         assert state.form.values["first_role"] == "architect"
-        assert state.form.values["last_role"] == "qa_local"
+        assert state.form.values["last_role"] == ""  # Empty by default
 
     def test_builds_nav_items(self):
         state = _loaded_state()

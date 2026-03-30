@@ -12,8 +12,8 @@ STANDARD_FIELDS: list[tuple[str, str]] = [
     ("model", "Model"),
     ("effort", "Effort"),
     ("tags", "Tags"),
-    ("first_role", "Start Stage"),
-    ("last_role", "Finish Stage"),
+    ("first_role", "Start Agent"),
+    ("last_role", "Finish Agent"),
 ]
 
 TOP_LEVEL_CUSTOM_FIELDS: list[tuple[str, str]] = [
@@ -26,14 +26,20 @@ TOP_LEVEL_CUSTOM_FIELDS: list[tuple[str, str]] = [
 HISTORY_TITLE_MAX_LEN = 40
 
 
-def format_snapshot_value(value: Any) -> str:
+def format_snapshot_value(value: Any, key: str = "") -> str:
     if value is None or value == "":
         return "[dim](empty)[/dim]"
+    # Normalize bool to lowercase string
+    if isinstance(value, bool):
+        return "true" if value else "false"
     if isinstance(value, list):
         return ", ".join(str(v) for v in value) if value else "[dim](empty)[/dim]"
     if isinstance(value, dict):
         if not value:
             return "[dim](empty)[/dim]"
+        if key == "tags":
+            # tag_roles: {tag: [roles]}
+            return ", ".join(f"{k} ({', '.join(v)})" for k, v in value.items())
         return ", ".join(f"{k}={v}" for k, v in value.items())
     return str(value)
 
@@ -48,7 +54,7 @@ def build_task_snapshot_lines(
     for key, label in STANDARD_FIELDS:
         if key not in values and key != "task":
             continue
-        display_val = format_snapshot_value(values.get(key, ""))
+        display_val = format_snapshot_value(values.get(key, ""), key=key)
         if key == highlight_key:
             lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
         else:
@@ -62,7 +68,7 @@ def build_task_snapshot_lines(
     if visible_custom_fields:
         lines.append("\n[dim]── Custom ──[/dim]")
         for key, label in visible_custom_fields:
-            display_val = format_snapshot_value(values.get(key, ""))
+            display_val = format_snapshot_value(values.get(key, ""), key=key)
             if key == highlight_key:
                 lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
             else:

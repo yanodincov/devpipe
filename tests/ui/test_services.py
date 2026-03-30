@@ -141,3 +141,133 @@ params:
     )
 
     assert {field.key for field in state["fields"]} == {"task_id"}
+
+
+def test_profile_with_reserved_input_name_shows_error(tmp_path):
+    """Test that profile with reserved input name shows error but is still selectable."""
+    devpipe_dir = tmp_path / ".devpipe"
+    profiles_dir = devpipe_dir / "profiles" / "bad-profile"
+    profiles_dir.mkdir(parents=True)
+    
+    # Profile with reserved input name 'runner' - need valid stages
+    (profiles_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: bad-profile
+inputs:
+  runner:
+    type: string
+    default: ""
+stages:
+  echo:
+    runner: codex
+    in:
+      msg: input.runner
+    out:
+      response:
+        type: string
+routing:
+  start_stage: echo
+  by_stage:
+    echo:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: bad-profile",
+        encoding="utf-8",
+    )
+    
+    data = prepare_initial_state(tmp_path)
+    
+    # Profile should still be selectable
+    assert data["profile"] == "bad-profile"
+    # profile_errors should contain the conflict error
+    assert len(data["profile_errors"]) >= 1
+    assert any("reserved" in err.lower() for err in data["profile_errors"])
+
+
+def test_profile_with_invalid_yaml_shows_error(tmp_path):
+    """Test that profile with loading error shows error and falls back to empty."""
+    devpipe_dir = tmp_path / ".devpipe"
+    profiles_dir = devpipe_dir / "profiles" / "broken-profile"
+    profiles_dir.mkdir(parents=True)
+    
+    # Valid YAML structure but invalid stage definition (missing required field)
+    (profiles_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: broken-profile
+inputs:
+  message:
+    type: string
+stages:
+  echo:
+    runner: codex
+    # Missing required 'out' field
+routing:
+  start_stage: echo
+  by_stage:
+    echo:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: broken-profile",
+        encoding="utf-8",
+    )
+    
+    data = prepare_initial_state(tmp_path)
+    
+    # Should have profile_errors due to validation failure
+    assert len(data["profile_errors"]) >= 1
+    # Error message should mention the validation issue
+    assert any("Invalid" in err or "Failed" in err for err in data["profile_errors"])
+
+
+def test_profile_missing_routing_shows_error(tmp_path):
+    """Test that profile missing routing shows error."""
+    devpipe_dir = tmp_path / ".devpipe"
+    profiles_dir = devpipe_dir / "profiles" / "incomplete-profile"
+    profiles_dir.mkdir(parents=True)
+    
+    # Missing routing section
+    (profiles_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: incomplete-profile
+inputs:
+  message:
+    type: string
+stages:
+  echo:
+    runner: codex
+    in:
+      msg: input.message
+    out:
+      response:
+        type: string
+# Missing routing section
+""".strip(),
+        encoding="utf-8",
+    )
+    
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: incomplete-profile",
+        encoding="utf-8",
+    )
+    
+    data = prepare_initial_state(tmp_path)
+    
+    # Should have error about missing routing
+    assert len(data["profile_errors"]) >= 1
+    # Error message should mention routing or start_stage
+    assert any("routing" in err.lower() or "start_stage" in err.lower() or "failed" in err.lower() for err in data["profile_errors"])

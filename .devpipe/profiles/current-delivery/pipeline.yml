@@ -11,38 +11,33 @@ inputs:
     type: string
     required: true
     default: ""
-    custom: true
   task_id:
     type: string
     required: false
     default: ""
-    custom: true
   target_branch:
     type: string
     required: false
     default: ""
-    custom: true
   namespace:
     type: string
     required: false
     default: ""
-    custom: true
   service:
     type: string
     required: false
     default: ""
+    multi: true
     custom: true
+    values: [
+      "test1",
+      "test2"
+    ]
   tags:
-    type: array
+    type: string
     required: false
     default: []
     multi: true
-    custom: true
-  extra_params:
-    type: object
-    required: false
-    default: {}
-    custom: true
 
 stages:
   architect:
@@ -50,6 +45,7 @@ stages:
     model: medium
     effort: medium
     retry_limit: 2
+    agent: architect
     in:
       task: input.task
       jira: integration.jira.issue
@@ -63,6 +59,9 @@ stages:
     model: high
     effort: middle
     retry_limit: 2
+    tags:
+      - go
+    agent: developer
     in:
       task: input.task
       architecture_plan: stage.architect.out.architecture_plan
@@ -76,6 +75,9 @@ stages:
     model: middle
     effort: high
     retry_limit: 2
+    tags:
+      - go
+    agent: test_developer
     in:
       task: input.task
       code_changes: stage.developer.out.code_changes
@@ -89,6 +91,7 @@ stages:
     model: middle
     effort: middle
     retry_limit: 2
+    agent: qa_local
     in:
       task: input.task
       tests: stage.test_developer.out.tests
@@ -103,19 +106,18 @@ stages:
     model: low
     effort: low
     retry_limit: 1
+    agent: release
     in:
       qa_report: stage.qa_local.out.qa_report
       target_branch: input.target_branch
       namespace: input.namespace
       service: input.service
-      extra_params: input.extra_params
       shared_context: context.shared
       # runtime bindings
       release_inputs.branch: runtime.git.current_branch
       release_inputs.target_branch: input.target_branch
       release_inputs.namespace: input.namespace
       release_inputs.service: input.service
-      release_inputs.extra_params: input.extra_params
     out:
       release_metadata:
         type: object
@@ -125,6 +127,7 @@ stages:
     model: middle
     effort: middle
     retry_limit: 1
+    agent: qa_stand
     in:
       release_metadata: stage.release.out.release_metadata
       shared_context: context.shared

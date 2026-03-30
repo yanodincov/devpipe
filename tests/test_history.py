@@ -20,6 +20,7 @@ def test_finish_run_marks_latest_matching_entry(tmp_path, monkeypatch) -> None:
         service="acquiring",
         namespace="u1",
         tags=["go"],
+        tag_roles={},
         extra_params={},
         first_role="architect",
         last_role="qa_stand",

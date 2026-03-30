@@ -47,7 +47,7 @@ class TestConfigScreenState:
         standard = [i for i in state.nav_items if i.section == NavSection.STANDARD]
         assert len(standard) == 8
         labels = [i.label for i in standard]
-        assert labels == ["Profile", "Task", "Runner", "Model", "Effort", "Tags", "Start Stage", "Finish Stage"]
+        assert labels == ["Profile", "Task", "Runner", "Model", "Effort", "Tags", "Start Agent", "Finish Agent"]
 
     def test_custom_section_has_profile_inputs(self):
         state = _make_state()
@@ -130,4 +130,4 @@ class TestConfigScreenState:
         assert state.form.values.get("model") == "auto"
         assert state.form.values.get("effort") == "auto"
         assert state.form.values.get("first_role") == "architect"
-        assert state.form.values.get("last_role") == "qa_stand"
+        assert state.form.values.get("last_role") == ""  # Empty by default

@@ -1,16 +1,15 @@
+"""Agent envelope building for profile-driven stages."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-
-from devpipe.roles.loader import RoleDefinition
-from devpipe.runtime.state import PipelineState
 
 BUILTIN_TAGS_DIR = Path(__file__).resolve().parents[3] / "tags"
 
 
 @dataclass
 class TaskEnvelope:
+    """Task envelope for runner execution."""
     role: str
     goal: str
     instructions: str
@@ -24,6 +23,7 @@ class TaskEnvelope:
 
 @dataclass
 class TaskResult:
+    """Result from runner execution."""
     ok: bool
     summary: str
     structured_output: dict[str, object]
@@ -38,31 +38,35 @@ def _read(path: Path) -> str:
     return path.read_text(encoding="utf-8").strip() if path.exists() else ""
 
 
-def compose_role_instructions(
+def compose_stage_instructions(
     base_prompt: str,
-    role_name: str,
+    stage_name: str,
     project_root: str | Path | None = None,
     tags: list[str] | None = None,
 ) -> str:
+    """Compose instructions for a stage by adding tag rules."""
     instructions = base_prompt.strip()
     if project_root is None:
         return instructions
 
     root = Path(project_root)
     sections: list[str] = []
-    project_rules = _read(root / ".devpipe" / f"{role_name.upper()}_RULES.md")
+
+    # Project-specific rules: .devpipe/<STAGE_NAME>_RULES.md
+    project_rules = _read(root / ".devpipe" / f"{stage_name.upper()}_RULES.md")
     if project_rules:
         sections.append(f"## Project-Specific Rules\n\n{project_rules}")
 
+    # Tag rules from custom and builtin tags
     for tag in tags or []:
-        # Custom tag rules: .devpipe/tags/<tag>/<role>/rules.md
-        custom_path = root / ".devpipe" / "tags" / tag / role_name / "rules.md"
+        # Custom tag rules: .devpipe/tags/<tag>/<stage>/rules.md
+        custom_path = root / ".devpipe" / "tags" / tag / stage_name / "rules.md"
         custom = _read(custom_path)
         if custom:
             sections.append(f"## Tag Rules: {tag}\n\n{custom}")
             continue
-        # Builtin tag rules: tags/<tag>/<role>/rules.md
-        builtin = _read(BUILTIN_TAGS_DIR / tag / role_name / "rules.md")
+        # Builtin tag rules: tags/<tag>/<stage>/rules.md
+        builtin = _read(BUILTIN_TAGS_DIR / tag / stage_name / "rules.md")
         if builtin:
             sections.append(f"## Tag Rules: {tag}\n\n{builtin}")
 
@@ -71,15 +75,16 @@ def compose_role_instructions(
     return f"{instructions}\n\n" + "\n\n".join(sections)
 
 
-def build_envelope(
-    role: RoleDefinition,
-    state: PipelineState,
+def build_stage_envelope(
+    stage_spec,
+    state,
     model_name: str,
     effort: str,
     extra_context: dict[str, object] | None = None,
     project_root: str | Path | None = None,
     tags: list[str] | None = None,
 ) -> TaskEnvelope:
+    """Build TaskEnvelope from stage specification and runtime state."""
     context = {
         "task_id": state.task_id,
         "task_text": state.task_text,
@@ -91,14 +96,34 @@ def build_envelope(
     if extra_context:
         context.update(extra_context)
 
+    # Determine prompt and output_schema from agent
+    prompt = ""
+    output_schema = {}
+    if stage_spec.agent:
+        prompt = stage_spec.agent.prompt
+        output_schema = stage_spec.agent.output_schema
+
+    # Merge stage-specific tags (from profile) with user-provided tags (from config)
+    stage_tags = set(stage_spec.tags or [])
+    user_tags = set(tags or [])
+    merged_tags = list(stage_tags | user_tags)
+
+    # Compose instructions with tag rules
+    instructions = compose_stage_instructions(
+        prompt,
+        stage_spec.name,
+        project_root=project_root,
+        tags=merged_tags,
+    )
+
     return TaskEnvelope(
-        role=role.name,
-        goal=f"Execute stage {role.name} for task {state.task_id}",
-        instructions=compose_role_instructions(role.prompt, role.name, project_root=project_root, tags=tags),
+        role=stage_spec.name,
+        goal=f"Execute stage {stage_spec.name} for task {state.task_id}",
+        instructions=instructions,
         model_name=model_name,
         effort=effort,
         context=context,
         artifacts=state.artifacts,
         constraints=["Return machine-readable JSON matching output_schema."],
-        output_schema=role.output_schema,
+        output_schema=output_schema,
     )

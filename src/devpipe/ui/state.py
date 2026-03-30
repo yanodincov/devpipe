@@ -18,6 +18,7 @@ class FieldKind(str, Enum):
     MULTI_SELECT = "multi_select"
     ARRAY = "array"
     OBJECT = "object"
+    TAG_ROLES = "tag_roles"  # special field for managing tags with per-role activation
 
 
 @dataclass
@@ -31,6 +32,9 @@ class FieldMeta:
     default: Any = ""
     description: str = ""
     section: str = "custom"  # "standard" or "custom"
+    custom: bool = False  # Allow custom values for SELECT/MULTI_SELECT
+    # Extra metadata for special field kinds (e.g., tag_roles: {tag_name: [available_roles]})
+    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class NavSection(str, Enum):
@@ -69,6 +73,9 @@ class FormState:
     available_models: list[str] = field(default_factory=lambda: ["auto", "low", "middle", "high"])
     available_efforts: list[str] = field(default_factory=lambda: ["auto", "low", "middle", "high", "extra"])
     available_stages: list[str] = field(default_factory=list)
+    available_tags: list[str] = field(default_factory=list)
+    profile_errors: list[str] = field(default_factory=list)  # Validation/loading errors from profile
+    routing_graph: dict[str, set[str]] = field(default_factory=dict)  # stage -> possible next stages
 
     def field_by_key(self, key: str) -> FieldMeta | None:
         for f in self.fields:
@@ -91,7 +98,7 @@ class FormState:
 
     @property
     def is_ready(self) -> bool:
-        return len(self.missing_required()) == 0
+        return len(self.missing_required()) == 0 and len(self.profile_errors) == 0
 
 
 @dataclass
@@ -156,11 +163,14 @@ def build_nav_items(form: FormState) -> list[NavItem]:
     """Build the left-column navigation from current form state.
 
     Structure:
-      Standard: Profile, Task, Runner, Start Stage, Finish Stage
+      Standard: Profile, Task, Runner, Start Stage, Finish Stage, (optional Tags)
       Custom: all profile-driven inputs as flat list
       Actions: History, Run Pipeline
     """
     items: list[NavItem] = []
+
+    # Determine if tags field is present
+    has_tags_field = any(f.key == "tags" for f in form.fields)
 
     # Standard section
     standard_fields = [
@@ -169,9 +179,12 @@ def build_nav_items(form: FormState) -> list[NavItem]:
         ("runner", "Runner"),
         ("model", "Model"),
         ("effort", "Effort"),
-        ("tags", "Tags"),
-        ("first_role", "Start Stage"),
-        ("last_role", "Finish Stage"),
+    ]
+    if has_tags_field:
+        standard_fields.append(("tags", "Tags"))
+    standard_fields += [
+        ("first_role", "Start Agent"),
+        ("last_role", "Finish Agent"),
     ]
     for key, label in standard_fields:
         items.append(NavItem(key=key, label=label, section=NavSection.STANDARD))
@@ -190,16 +203,27 @@ def build_nav_items(form: FormState) -> list[NavItem]:
 
 def derive_status_bar(form: FormState) -> StatusBarState:
     """Derive status bar state from current form."""
+    # Profile errors take precedence - can't run with invalid config
+    if form.profile_errors:
+        return StatusBarState(
+            left_text="↑↓ navigate  Enter edit",
+            center_text=f"{len(form.profile_errors)} error(s)",
+            right_text="NOT READY",
+            is_ready=False,
+            validation_errors=form.profile_errors,
+        )
+    
     missing = form.missing_required()
     if missing:
         errors = [f"{k} is required" for k in missing]
         return StatusBarState(
             left_text="↑↓ navigate  Enter edit",
-            center_text=f"{len(missing)} field(s) need attention",
+            center_text=f"{len(errors)} error(s)",
             right_text="NOT READY",
             is_ready=False,
             validation_errors=errors,
         )
+    
     return StatusBarState(
         left_text="↑↓ navigate  Enter edit",
         center_text="All fields set",

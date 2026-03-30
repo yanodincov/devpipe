@@ -1,1 +1,0 @@
-{"type":"object","properties":{"summary":{"type":"string"},"release_notes":{"type":"array","items":{"type":"string"}},"deploy_branch":{"type":"string"},"namespace":{"type":"string"},"pod_name":{"type":"string"}},"required":["summary"]}

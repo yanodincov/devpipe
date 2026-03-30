@@ -4,6 +4,7 @@ Compatible with Textual 8.x.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from rich.text import Text
 
 from textual.app import ComposeResult
@@ -13,7 +14,7 @@ from textual.message import Message
 from textual.screen import Screen
 from textual.widget import Widget
 
-from devpipe.history import load_history
+from devpipe.history import load_run_history, RunHistoryEntry
 from devpipe.ui.state import UIState
 from devpipe.ui.widgets.history_preview import HistoryPreview
 from devpipe.ui.widgets.task_snapshot import compact_history_title
@@ -35,7 +36,7 @@ class HistoryList(Widget, can_focus=True):
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
-        self._entries: list[dict] = []
+        self._entries: list[RunHistoryEntry] = []
         self._selected: int = 0
 
     def render(self) -> Text:
@@ -43,7 +44,7 @@ class HistoryList(Widget, can_focus=True):
         text.append("╸ History\n\n", style="bold dim")
         available_width = max(12, (self.size.width or 28) - 2)
         for i, entry in enumerate(self._entries):
-            task = compact_history_title(entry.get("task", "") or "", max_len=available_width)
+            task = compact_history_title(entry.config.get("task", "") or "", max_len=available_width)
             if i == self._selected:
                 text.append(f"» {task}\n", style="bold cyan")
             else:
@@ -52,7 +53,7 @@ class HistoryList(Widget, can_focus=True):
             text.append("No history entries\n", style="dim")
         return text
 
-    def set_entries(self, entries: list[dict]) -> None:
+    def set_entries(self, entries: list[RunHistoryEntry]) -> None:
         self._entries = entries
         self._selected = 0
         self.refresh()
@@ -68,7 +69,7 @@ class HistoryList(Widget, can_focus=True):
             self.refresh()
 
     @property
-    def current_entry(self) -> dict | None:
+    def current_entry(self) -> RunHistoryEntry | None:
         if self._entries and 0 <= self._selected < len(self._entries):
             return self._entries[self._selected]
         return None
@@ -111,13 +112,14 @@ class HistoryScreen(Screen):
 
     class RestoreEntry(Message):
         """Request to restore a history entry into form."""
-        def __init__(self, entry: dict) -> None:
+        def __init__(self, entry: RunHistoryEntry) -> None:
             super().__init__()
             self.entry = entry
 
-    def __init__(self, ui_state: UIState, **kwargs) -> None:
+    def __init__(self, ui_state: UIState, project_root: Path | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._state = ui_state
+        self.project_root = project_root or Path.cwd()
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="history-main"):
@@ -126,7 +128,8 @@ class HistoryScreen(Screen):
         yield HistoryStatusBar()
 
     def on_mount(self) -> None:
-        entries = load_history()[:20]
+        history_runs_dir = self.project_root / ".devpipe" / "runs"
+        entries = load_run_history(history_runs_dir)[:20]
         hist_list = self.query_one("#history-list", HistoryList)
         hist_list.set_entries(entries)
         if entries:

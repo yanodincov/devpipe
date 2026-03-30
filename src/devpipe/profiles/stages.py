@@ -16,6 +16,53 @@ class InputType(str, Enum):
     ARRAY = "array"
 
 
+def _parse_inputs_soft(inputs_data: dict[str, Any]) -> tuple[dict[str, "InputSpec"], list[str]]:
+    """Parse inputs with error collection instead of failing.
+    
+    Returns tuple of (parsed_inputs, error_messages).
+    Invalid inputs are skipped, errors are collected.
+    """
+    from pydantic import ValidationError
+    parsed: dict[str, InputSpec] = {}
+    errors: list[str] = []
+    
+    for key, spec_data in inputs_data.items():
+        if not isinstance(spec_data, dict):
+            errors.append(f"inputs.{key}: specification must be a dictionary")
+            continue
+        
+        # Get type first
+        type_val = spec_data.get("type")
+        if not type_val:
+            errors.append(f"inputs.{key}: type is required")
+            continue
+        
+        # Get multi and default
+        multi = spec_data.get("multi", False)
+        default = spec_data.get("default")
+        
+        # Auto-fix default for multi fields
+        if multi and not isinstance(default, list):
+            # Convert scalar to empty list for multi
+            spec_data = dict(spec_data)  # Copy to not modify original
+            spec_data["default"] = []
+            errors.append(f"inputs.{key}: multi=True requires default to be a list, auto-fixed to []")
+        
+        if not multi and isinstance(default, list) and spec_data.get("values") is None:
+            spec_data = dict(spec_data)
+            spec_data["default"] = ""
+            errors.append(f"inputs.{key}: multi=False requires scalar default, auto-fixed to empty string")
+        
+        try:
+            parsed[key] = InputSpec(**spec_data)
+        except ValidationError as e:
+            errors.append(f"inputs.{key}: {e}")
+        except Exception as e:
+            errors.append(f"inputs.{key}: {e}")
+    
+    return parsed, errors
+
+
 class InputSpec(BaseModel):
     """Specification for a profile input."""
     type: InputType
@@ -26,11 +73,13 @@ class InputSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_default_matches_multi(self) -> InputSpec:
-        """Validate that default matches multi flag."""
+        """Validate that default matches multi flag, auto-fix if needed."""
         if self.multi and not isinstance(self.default, list):
-            raise ValueError("multi=True requires list default")
-        if not self.multi and isinstance(self.default, list):
-            raise ValueError("multi=False requires scalar default")
+            # Auto-fix: convert scalar to list for multi fields
+            object.__setattr__(self, 'default', [])
+        if not self.multi and isinstance(self.default, list) and self.values is None:
+            # Auto-fix: convert list to empty string for non-multi fields without values
+            object.__setattr__(self, 'default', '')
         return self
 
     @field_validator("values")
@@ -49,9 +98,15 @@ class InputSpec(BaseModel):
     @model_validator(mode="after")
     def validate_custom_flag(self) -> InputSpec:
         """Validate custom flag constraints."""
-        if not self.custom and self.values is None:
-            raise ValueError("custom=false requires values list to define allowed options")
-        # custom=true allows any value of the type, values is optional
+        # If no values provided, field is free-form (implicitly custom)
+        # Exception: bool type never allows custom values
+        if self.values is None and self.type != InputType.BOOL:
+            # Auto-set custom=True for free-form fields (no validation needed)
+            self.custom = True
+        # If values provided, custom can be True or False (default False)
+        # For bool, always force custom=False
+        if self.type == InputType.BOOL:
+            self.custom = False
         return self
 
 
@@ -89,6 +144,21 @@ class StageOutField(BaseModel):
     fields: dict[str, FieldSpec]
 
 
+class AgentSpec(BaseModel):
+    """Agent specification for a stage (prompt and output schema)."""
+    model_config = ConfigDict(extra='ignore')
+
+    prompt: str = ""
+    output_schema: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_agent_defined(self) -> AgentSpec:
+        """Validate that at least prompt or output_schema is provided."""
+        if not self.prompt and not self.output_schema:
+            raise ValueError("agent must have at least prompt or output_schema")
+        return self
+
+
 class StageSpec(BaseModel):
     """Complete specification for a pipeline stage."""
     model_config = ConfigDict(populate_by_name=True)
@@ -100,6 +170,8 @@ class StageSpec(BaseModel):
     in_: StageInBinding | None = Field(default=None, alias="in")
     out: StageOutField
     retry_limit: int = 1
+    tags: list[str] = Field(default_factory=list)
+    agent: AgentSpec | None = None
 
     @field_validator("name")
     @classmethod

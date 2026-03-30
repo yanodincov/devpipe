@@ -48,8 +48,8 @@ class TestBuildNavItems:
         assert "Model" in labels
         assert "Effort" in labels
         assert "Tags" in labels
-        assert "Start Stage" in labels
-        assert "Finish Stage" in labels
+        assert "Start Agent" in labels
+        assert "Finish Agent" in labels
 
     def test_has_custom_section_with_profile_inputs(self):
         form = _sample_form()
