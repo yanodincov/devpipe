@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TextArea
 
 from devpipe.ui.state import FieldKind, FieldMeta, FormState, NavItem, NavSection
 from devpipe.ui.widgets.detail_panel import DetailPanel
@@ -141,9 +141,24 @@ def test_single_choice_has_correct_option_marked() -> None:
     item = NavItem(key="model", label="Model", section=NavSection.STANDARD)
 
     panel.begin_edit(item, form)
+    
+    # Initial state: auto is committed, cursor on auto
+    rendered = panel.render().plain
+    assert "● auto" in rendered
+    
+    # Move cursor down twice
     panel.move_editor_down()
     panel.move_editor_down()
-
+    
+    # Now cursor is on middle, but committed is still auto
+    rendered = panel.render().plain
+    assert "▸ ○ middle" in rendered
+    assert "● auto" in rendered
+    
+    # Press Enter to select middle
+    panel.editor_activate()
+    
+    # Now middle is committed
     rendered = panel.render().plain
     assert "● middle" in rendered
     assert "○ auto" in rendered
@@ -159,6 +174,76 @@ def test_single_choice_activate_updates_committed_value() -> None:
     assert panel.editor_activate() == "confirm"
 
     assert panel.editor_current_value() == "developer"
+
+
+def test_single_choice_deselect_on_non_required_field() -> None:
+    """Non-required fields can be deselected by pressing Enter on selected option."""
+    panel = DetailPanel()
+    form = FormState(
+        values={"severity": "high"},
+        fields=[
+            FieldMeta(
+                key="severity",
+                label="Severity",
+                kind=FieldKind.SELECT,
+                options=["low", "middle", "high"],
+                required=False,
+                section="custom",
+            ),
+        ],
+    )
+    item = NavItem(key="severity", label="Severity", section=NavSection.CUSTOM)
+
+    panel.begin_edit(item, form)
+    
+    # Initial: high is selected
+    rendered = panel.render().plain
+    assert "● high" in rendered
+    
+    # Move to the selected option and press Enter
+    panel.move_editor_down()
+    panel.move_editor_down()
+    assert panel.editor_activate() == "toggle"
+    
+    # Now nothing is selected (empty string)
+    assert panel.editor_current_value() == ""
+    rendered = panel.render().plain
+    assert "○ high" in rendered
+
+
+def test_single_choice_cannot_deselect_required_field() -> None:
+    """Required fields cannot be deselected."""
+    panel = DetailPanel()
+    form = FormState(
+        values={"severity": "high"},
+        fields=[
+            FieldMeta(
+                key="severity",
+                label="Severity",
+                kind=FieldKind.SELECT,
+                options=["low", "middle", "high"],
+                required=True,
+                section="custom",
+            ),
+        ],
+    )
+    item = NavItem(key="severity", label="Severity", section=NavSection.CUSTOM)
+
+    panel.begin_edit(item, form)
+    
+    # Initial: high is selected
+    rendered = panel.render().plain
+    assert "● high" in rendered
+    
+    # Move to the selected option and press Enter
+    panel.move_editor_down()
+    panel.move_editor_down()
+    assert panel.editor_activate() == "confirm"
+    
+    # Still selected (required field cannot be deselected)
+    assert panel.editor_current_value() == "high"
+    rendered = panel.render().plain
+    assert "● high" in rendered
 
 
 def test_begin_edit_namespace_uses_single_choice_editor_with_custom_values() -> None:
@@ -299,6 +384,6 @@ def test_attached_text_editor_mounts_input_only() -> None:
 
             children = list(panel.children)
             assert len(children) == 1
-            assert isinstance(children[0], Input)
+            assert isinstance(children[0], TextArea)
 
     asyncio.run(run())

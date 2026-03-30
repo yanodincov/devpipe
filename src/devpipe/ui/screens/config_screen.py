@@ -13,7 +13,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.message import Message
 from textual.screen import Screen
-from textual.widgets import Input
+from textual.widgets import Input, TextArea
 
 from devpipe.ui.state import (
     FieldKind,
@@ -127,13 +127,23 @@ class ConfigScreen(Screen):
     # ── Edit lifecycle ────────────────────────────────────────────────────
 
     def action_activate(self) -> None:
-        """Enter pressed — begin edit or activate action (when NOT in edit mode)."""
+        """Enter pressed — submit for profile/required fields with values, toggle for others."""
         if self._editing:
             detail = self.query_one("#detail-panel", DetailPanel)
             if detail.is_choice_editor_active():
+                item = self._state.selected_nav_item
+                field_meta = self._state.form.field_by_key(item.key) if item else None
+                
+                # Check if Enter should submit (profile or required field with values)
+                should_submit = (
+                    item and item.key == "profile"
+                    or field_meta and field_meta.required and field_meta.options
+                )
+                
                 action = detail.editor_activate()
                 if action == "confirm":
-                    self._confirm_edit()
+                    if should_submit:
+                        self._confirm_edit()
                 elif action == "custom":
                     detail.begin_custom_value_input()
                 return
@@ -195,8 +205,8 @@ class ConfigScreen(Screen):
             return
 
         try:
-            inp = detail.query_one("#inline-input", Input)
-            raw_value = inp.value
+            inp = detail.query_one("#inline-input")
+            raw_value = inp.text if isinstance(inp, TextArea) else inp.value
             value = self._parse_raw_value(item.key, raw_value)
         except Exception:
             value = ""
@@ -249,17 +259,29 @@ class ConfigScreen(Screen):
             if detail.editor_mode == "tag_roles" and detail.editor_submode == "edit_roles":
                 detail.cancel_submode()
             else:
-                # For tag_roles editor in main mode, apply changes before exiting
-                if detail.editor_mode == "tag_roles" and detail.editor_submode == "":
-                    item = self._state.selected_nav_item
-                    if item:
+                # Apply changes before exiting
+                item = self._state.selected_nav_item
+                if item:
+                    if detail.is_choice_editor_active():
                         value = detail.editor_current_value()
                         self._state = set_field_value(self._state, item.key, value)
                         self._sync_app_state()
-                        if item.key == "tags":
+                        if item.key == "profile":
+                            self.app.post_message(self.ProfileChanged(str(value)))
+                        elif item.key in {"first_role", "last_role", "tags"}:
                             self.app.post_message(self.DerivedInputsChanged())
+                    else:
+                        # Text editor mode - apply the value
+                        try:
+                            inp = detail.query_one("#inline-input")
+                            raw_value = inp.text if isinstance(inp, TextArea) else inp.value
+                            value = self._parse_raw_value(item.key, raw_value)
+                            self._state = set_field_value(self._state, item.key, value)
+                            self._sync_app_state()
+                        except Exception:
+                            pass
                 self._editing = False
-                self._show_current_summary()
+                self._update_display()
         else:
             self.app.exit()
 

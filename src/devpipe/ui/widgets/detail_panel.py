@@ -7,7 +7,7 @@ from rich.text import Text
 
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Input, Static
+from textual.widgets import Input, Static, TextArea
 
 from devpipe.ui.state import FieldKind, FieldMeta, FormState, NavItem, NavSection
 from devpipe.ui.widgets.task_snapshot import (
@@ -48,6 +48,10 @@ class DetailPanel(Widget):
     }
     DetailPanel #inline-input:focus {
         border: tall #6b7280;
+    }
+    DetailPanel TextArea {
+        height: 8;
+        max-height: 12;
     }
     """
 
@@ -266,8 +270,12 @@ class DetailPanel(Widget):
             else:
                 text = str(value) if value else ""
             self._mount_text_editor(item.key, text)
-        else:
+        elif kind == FieldKind.INT:
             self._mount_text_editor(item.key, str(value) if value else "")
+        elif kind == FieldKind.STRING:
+            self._mount_text_editor(item.key, str(value) if value else "", multiline=True)
+        else:
+            self._mount_text_editor(item.key, str(value) if value else "", multiline=True)
 
         self.refresh()
 
@@ -357,16 +365,23 @@ class DetailPanel(Widget):
                 result.append(string_value)
         return result
 
-    def _mount_text_editor(self, key: str, value: str) -> None:
+    def _mount_text_editor(self, key: str, value: str, multiline: bool = False) -> None:
         self._summary_text = ""
         if not self.is_attached:
             self.refresh()
             return
-        self._mount_inline_input(
-            title_markup="",
-            input_value=value,
-            placeholder=f"Enter {key}",
-        )
+        if multiline:
+            self._mount_inline_textarea(
+                title_markup="",
+                input_value=value,
+                placeholder=f"Enter {key}",
+            )
+        else:
+            self._mount_inline_input(
+                title_markup="",
+                input_value=value,
+                placeholder=f"Enter {key}",
+            )
 
     def _mount_custom_value_input(self) -> None:
         self._editor_custom_prompt = True
@@ -395,6 +410,21 @@ class DetailPanel(Widget):
         self.mount(inp)
         inp.focus()
 
+    def _mount_inline_textarea(
+        self,
+        title_markup: str,
+        input_value: str,
+        placeholder: str,
+    ) -> None:
+        self._summary_text = ""
+        if title_markup:
+            top = Static(title_markup, classes="editor-copy editor-copy--top")
+            self.mount(top)
+        ta = TextArea(input_value, id="inline-input")
+        ta.placeholder = placeholder
+        self.mount(ta)
+        ta.focus()
+
     def _render_choice_editor(self, label: str, multi: bool) -> str:
         lines = []
         description, _type_name, _options = self._standard_field_details(self._edit_field, self._form)
@@ -410,7 +440,7 @@ class DetailPanel(Widget):
                 mark = "●" if option in self._editor_selected_values else "○"
                 lines.append(f" {cursor} {mark} {option}")
             else:
-                mark = "●" if index == self._editor_selected_index else "○"
+                mark = "●" if option == self._editor_committed_value else "○"
                 lines.append(f" {cursor} {mark} {option}")
         if self._editor_allows_custom:
             cursor = "▸" if self._editor_selected_index == len(self._editor_options) else " "
@@ -441,9 +471,7 @@ class DetailPanel(Widget):
 
     def editor_current_value(self) -> Any:
         if self._editor_mode == "single_choice":
-            if not self._editor_options:
-                return ""
-            return self._editor_options[self._editor_selected_index]
+            return self._editor_committed_value
         if self._editor_mode == "multi_choice":
             return list(self._editor_selected_values)
         if self._editor_mode == "tag_roles":
@@ -492,7 +520,16 @@ class DetailPanel(Widget):
     def editor_activate(self) -> str:
         if self._editor_mode == "single_choice":
             if self._editor_selected_index < len(self._editor_options):
-                self._editor_committed_value = self._editor_options[self._editor_selected_index]
+                option = self._editor_options[self._editor_selected_index]
+                # If clicking on already selected option and field is not required, deselect
+                if option == self._editor_committed_value:
+                    field_meta = self._form.field_by_key(self._edit_field)
+                    if field_meta and not field_meta.required:
+                        self._editor_committed_value = ""
+                        self._refresh_editor_text()
+                        return "toggle"
+                # Otherwise select this option
+                self._editor_committed_value = option
                 self._refresh_editor_text()
                 return "confirm"
             return "custom"

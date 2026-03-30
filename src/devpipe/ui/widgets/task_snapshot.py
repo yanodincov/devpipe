@@ -41,7 +41,13 @@ def format_snapshot_value(value: Any, key: str = "") -> str:
             # tag_roles: {tag: [roles]}
             return ", ".join(f"{k} ({', '.join(v)})" for k, v in value.items())
         return ", ".join(f"{k}={v}" for k, v in value.items())
-    return str(value)
+    str_value = str(value)
+    if key == "task":
+        lines = str_value.splitlines()
+        if len(lines) > 3:
+            return "\n".join(lines[:3]) + "\n..."
+        return str_value
+    return str_value
 
 
 def build_task_snapshot_lines(
