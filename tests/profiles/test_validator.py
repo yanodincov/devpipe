@@ -361,3 +361,85 @@ routing:
         result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
         assert not result.valid
         assert any("not in values" in e.message for e in result.errors)
+
+    def test_retry_limit_negative(self, tmp_path: Path):
+        """Test that negative retry_limit fails."""
+        pipeline = """
+version: 1
+name: test
+stages:
+  build:
+    runner: codex
+    retry_limit: -1
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert not result.valid
+        assert any("retry_limit" in e.message and "non-negative" in e.message for e in result.errors)
+
+    def test_retry_limit_float(self, tmp_path: Path):
+        """Test that float retry_limit fails."""
+        pipeline = """
+version: 1
+name: test
+stages:
+  build:
+    runner: codex
+    retry_limit: 1.5
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert not result.valid
+        assert any("retry_limit" in e.message and "integer" in e.message for e in result.errors)
+
+    def test_retry_limit_valid(self, tmp_path: Path):
+        """Test that valid retry_limit passes."""
+        pipeline = """
+version: 1
+name: test
+stages:
+  build:
+    runner: codex
+    retry_limit: 3
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert result.valid, [e.message for e in result.errors]
+
+    def test_retry_limit_zero(self, tmp_path: Path):
+        """Test that retry_limit 0 passes."""
+        pipeline = """
+version: 1
+name: test
+stages:
+  build:
+    runner: codex
+    retry_limit: 0
+routing:
+  start_stage: build
+  by_stage:
+    build:
+      next_stages:
+        - stage: completed
+          default: true
+"""
+        result = validate_pipeline_file(write_pipeline(pipeline, tmp_path))
+        assert result.valid, [e.message for e in result.errors]

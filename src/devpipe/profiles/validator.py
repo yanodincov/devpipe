@@ -396,6 +396,25 @@ def _validate_stages(stages: dict[str, Any], profile_dir: Path) -> tuple[list[Va
                     message=f"Invalid effort '{effort}'. Available efforts: {', '.join(sorted(AVAILABLE_EFFORTS))}"
                 ))
         
+        # Validate retry_limit if present
+        retry_limit = spec.get("retry_limit")
+        if retry_limit is not None:
+            if not isinstance(retry_limit, int):
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.retry_limit",
+                    message="retry_limit must be an integer"
+                ))
+            elif isinstance(retry_limit, bool):
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.retry_limit",
+                    message="retry_limit must be an integer, not boolean"
+                ))
+            elif retry_limit < 0:
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.retry_limit",
+                    message="retry_limit must be non-negative"
+                ))
+        
         # Validate in bindings
         in_bindings = spec.get("in", {})
         if in_bindings and not isinstance(in_bindings, dict):
