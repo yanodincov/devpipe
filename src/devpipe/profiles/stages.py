@@ -184,9 +184,7 @@ class StageSpec(BaseModel):
     @field_validator("runner")
     @classmethod
     def validate_runner(cls, v: str) -> str:
-        """Validate runner type."""
-        if v not in {"codex", "claude", "auto"}:
-            raise ValueError("runner must be one of: codex, claude, auto")
+        """Accept any runner value - validation happens in validator module."""
         return v
 
     @field_validator("model", mode="before")

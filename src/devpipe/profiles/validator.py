@@ -35,13 +35,13 @@ AVAILABLE_RUNNERS = {"auto", "codex", "claude"}
 
 # Available models per runner
 AVAILABLE_MODELS = {
-    "codex": {"auto", "low", "middle", "high"},
-    "claude": {"auto", "low", "middle", "high"},
-    "auto": {"auto", "low", "middle", "high"},
+    "codex": {"auto", "low", "middle", "medium", "high"},
+    "claude": {"auto", "low", "middle", "medium", "high"},
+    "auto": {"auto", "low", "middle", "medium", "high"},
 }
 
 # Available effort levels
-AVAILABLE_EFFORTS = {"auto", "low", "middle", "high"}
+AVAILABLE_EFFORTS = {"auto", "low", "middle", "medium", "high"}
 
 
 def validate_pipeline_file(path: Path) -> ValidationResult:
@@ -293,6 +293,42 @@ def _validate_stages(stages: dict[str, Any]) -> list[ValidationError]:
                 path=f"{path_prefix}.runner",
                 message="runner must be a string"
             ))
+        elif runner not in AVAILABLE_RUNNERS:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.runner",
+                message=f"Invalid runner '{runner}'. Available runners: {', '.join(sorted(AVAILABLE_RUNNERS))}"
+            ))
+        
+        # Validate model if present
+        model = spec.get("model")
+        if model is not None:
+            if not isinstance(model, str):
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.model",
+                    message="model must be a string"
+                ))
+            elif model not in AVAILABLE_MODELS.get("auto", set()):
+                # Model availability depends on runner, but we validate against common set
+                all_models = set().union(*AVAILABLE_MODELS.values())
+                if model not in all_models:
+                    errors.append(ValidationError(
+                        path=f"{path_prefix}.model",
+                        message=f"Invalid model '{model}'. Available models: {', '.join(sorted(all_models))}"
+                    ))
+        
+        # Validate effort if present
+        effort = spec.get("effort")
+        if effort is not None:
+            if not isinstance(effort, str):
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.effort",
+                    message="effort must be a string"
+                ))
+            elif effort not in AVAILABLE_EFFORTS:
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.effort",
+                    message=f"Invalid effort '{effort}'. Available efforts: {', '.join(sorted(AVAILABLE_EFFORTS))}"
+                ))
         
         # Validate in bindings
         in_bindings = spec.get("in", {})
