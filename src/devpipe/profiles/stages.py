@@ -154,7 +154,7 @@ class AgentSpec(BaseModel):
     
     After loading, prompt_content and schema_content contain the file contents.
     """
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', populate_by_name=True)
 
     folder: str | None = None
     prompt: str | None = None

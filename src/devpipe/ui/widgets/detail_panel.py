@@ -121,7 +121,9 @@ class DetailPanel(Widget):
             lines.append("[bold white on red]  PROFILE ERRORS  [/bold white on red]")
             lines.append("")
             for error in form.profile_errors:
-                lines.append(f"  [bold red]![/bold red] [dim]{error}[/dim]")
+                # Escape brackets to prevent Textual markup parsing
+                safe_error = error.replace("[", "\\[").replace("]", "\\]")
+                lines.append(f"  [bold red]![/bold red] [dim]{safe_error}[/dim]")
             lines.append("")
             self._summary_text = "\n".join(lines)
             self.refresh()
