@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "content_summary": { "type": "string" },
+    "word_count": { "type": "integer" },
+    "summary": { "type": "string" }
+  },
+  "required": ["content_summary", "word_count", "summary"]
+}

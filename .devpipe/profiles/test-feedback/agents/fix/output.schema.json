@@ -1,8 +1,0 @@
-{
-  "type": "object",
-  "required": ["updated_plan", "changes_made"],
-  "properties": {
-    "updated_plan": { "type": "object" },
-    "changes_made": { "type": "boolean" }
-  }
-}

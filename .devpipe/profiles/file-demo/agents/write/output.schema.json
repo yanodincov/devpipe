@@ -1,0 +1,9 @@
+{
+  "type": "object",
+  "properties": {
+    "file_path": { "type": "string" },
+    "lines_written": { "type": "integer" },
+    "summary": { "type": "string" }
+  },
+  "required": ["file_path", "lines_written", "summary"]
+}

@@ -1,0 +1,63 @@
+version: 1
+name: file-demo
+
+defaults:
+  runner: auto
+  model: low
+  effort: low
+
+inputs:
+  topic:
+    type: string
+    required: true
+    default: "space exploration"
+    custom: true
+
+stages:
+  write:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: write
+    in:
+      topic: input.topic
+    out:
+      file_path:
+        type: string
+      lines_written:
+        type: int
+      summary:
+        type: string
+
+  read:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: read
+    in:
+      topic: input.topic
+      file_path: stage.write.out.file_path
+      lines_written: stage.write.out.lines_written
+    out:
+      content_summary:
+        type: string
+      word_count:
+        type: int
+      summary:
+        type: string
+
+routing:
+  start_stage: write
+  by_stage:
+    write:
+      next_stages:
+        - stage: read
+          default: true
+    read:
+      next_stages:
+        - stage: completed
+          default: true

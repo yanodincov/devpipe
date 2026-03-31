@@ -24,6 +24,8 @@ class ClaudeRunner(BaseCliRunner):
         self._thinking_buffer = ""
         self._result_structured_output: dict[str, Any] | None = None
         self._tokens: int = 0
+        self._current_tool_name: str | None = None
+        self._current_tool_input: str = ""
 
     @staticmethod
     def _append_flag(command: list[str], flag: str, *values: str) -> list[str]:
@@ -36,7 +38,7 @@ class ClaudeRunner(BaseCliRunner):
         schema = json.dumps(envelope.output_schema, separators=(",", ":"))
         prompt = self.build_prompt(envelope)
         command = list(self.command)
-        self._append_flag(command, "--print")
+        self._append_flag(command, "-p")
         self._append_flag(command, "--verbose")
         self._append_flag(command, "--output-format", "stream-json")
         self._append_flag(command, "--include-partial-messages")
@@ -104,20 +106,53 @@ class ClaudeRunner(BaseCliRunner):
             block_type = block.get("type")
             if block_type == "thinking":
                 self._thinking_buffer = ""
+                self._current_tool_name = None
+                self._current_tool_input = ""
             elif block_type == "tool_use":
-                name = block.get("name")
-                if name:
-                    self._emit({"action": name})
+                self._flush_thinking()
+                self._current_tool_name = block.get("name")
+                self._current_tool_input = ""
             return
 
         if etype == "content_block_delta":
             delta = stream_event.get("delta", {})
             if delta.get("type") == "thinking_delta":
                 self._thinking_buffer += delta.get("thinking", "")
+            elif delta.get("type") == "input_json_delta":
+                self._current_tool_input += delta.get("partial_json", "")
             return
 
         if etype == "content_block_stop":
             self._flush_thinking()
+            tool_name = self._current_tool_name
+            if tool_name and tool_name != "StructuredOutput":
+                try:
+                    tool_input = json.loads(self._current_tool_input) if self._current_tool_input else {}
+                except json.JSONDecodeError:
+                    tool_input = {}
+                cmd = tool_input.get("command", tool_name)
+                self._emit({"action": cmd})
+            self._current_tool_name = None
+            self._current_tool_input = ""
+
+    def _handle_user_event(self, event: dict[str, Any]) -> None:
+        """Handle tool_result blocks from user messages."""
+        message = event.get("message", {})
+        for block in message.get("content", []):
+            if block.get("type") != "tool_result":
+                continue
+            content = block.get("content", "")
+            if isinstance(content, list):
+                content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict))
+            if not content or not content.strip():
+                continue
+            lines = content.strip().splitlines()
+            shown = lines[:4]
+            rest = len(lines) - 4
+            payload: dict[str, Any] = {"result": shown if len(shown) > 1 else shown[0]}
+            if rest > 0:
+                payload["more_lines"] = rest
+            self._emit(payload)
 
     def _on_raw_output(self, text: str) -> None:
         if not text:
@@ -142,6 +177,8 @@ class ClaudeRunner(BaseCliRunner):
 
             if event.get("type") == "stream_event":
                 self._handle_stream_event(event.get("event", {}))
+            elif event.get("type") == "user":
+                self._handle_user_event(event)
 
     def _run_pty(self, envelope: TaskEnvelope):
         command, prompt = self._get_command_and_input(envelope)
@@ -168,6 +205,8 @@ class ClaudeRunner(BaseCliRunner):
         self._thinking_buffer = ""
         self._result_structured_output = None
         self._tokens = 0
+        self._current_tool_name = None
+        self._current_tool_input = ""
         self._real_output_callback = self.output_callback
         self.output_callback = self._on_raw_output
 
