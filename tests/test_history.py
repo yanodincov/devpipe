@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from devpipe import history
@@ -34,3 +35,24 @@ def test_finish_run_marks_latest_matching_entry(tmp_path, monkeypatch) -> None:
 
     assert entries[0]["date"] == "2026-03-28 10:00:00"
     assert entries[0]["finished_at"] == "2026-03-28 10:05:00"
+
+
+def test_save_run_history_writes_yaml_file(tmp_path) -> None:
+    entry = history.RunHistoryEntry(
+        run_id="run-123",
+        timestamp=datetime(2026, 3, 31, 12, 0, 0, tzinfo=timezone.utc),
+        profile="idea-lab",
+        config={"task": "test"},
+        stages=[],
+        summary={"final_status": "completed"},
+    )
+
+    history_dir = tmp_path / ".devpipe" / "history"
+    history.save_run_history(entry, history_dir)
+
+    saved_file = history_dir / "run-123.devpipe.yml"
+    assert saved_file.exists()
+
+    loaded = history.load_run_history(history_dir)
+    assert len(loaded) == 1
+    assert loaded[0].run_id == "run-123"

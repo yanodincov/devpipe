@@ -184,6 +184,17 @@ def apply_history_entry(state: UIState, entry: RunHistoryEntry | dict) -> UIStat
     else:
         config = entry
 
+    def _infer_kind(value: Any) -> FieldKind:
+        if isinstance(value, bool):
+            return FieldKind.SELECT
+        if isinstance(value, list):
+            return FieldKind.ARRAY
+        if isinstance(value, dict):
+            return FieldKind.OBJECT
+        if isinstance(value, int):
+            return FieldKind.INT
+        return FieldKind.STRING
+
     field_mapping = {
         "task": "task",
         "task_id": "task_id",
@@ -221,10 +232,32 @@ def apply_history_entry(state: UIState, entry: RunHistoryEntry | dict) -> UIStat
         else:
             new.form.values["tags"] = {}
 
-    # Merge extra params
+    # Merge custom params from both modern extra_params and direct config keys.
+    existing_keys = {field.key for field in new.form.fields}
+    restored_custom = {}
     extra = config.get("extra_params", {})
-    for k, v in extra.items():
+    if isinstance(extra, dict):
+        restored_custom.update(extra)
+
+    known_keys = set(field_mapping) | {"profile", "tags", "tag_roles", "extra_params"}
+    for key, value in config.items():
+        if key in known_keys:
+            continue
+        if key in existing_keys or key not in new.form.values:
+            restored_custom.setdefault(key, value)
+
+    for k, v in restored_custom.items():
         new.form.values[k] = v
+        if k not in existing_keys:
+            new.form.fields.append(
+                FieldMeta(
+                    key=k,
+                    label=k.replace("_", " ").title(),
+                    kind=_infer_kind(v),
+                    section="custom",
+                )
+            )
+            existing_keys.add(k)
 
     # Validate runner
     if new.form.values.get("runner") not in new.form.available_runners:
@@ -240,6 +273,7 @@ def apply_history_entry(state: UIState, entry: RunHistoryEntry | dict) -> UIStat
         # Only reset if it's a non-empty invalid value
         new.form.values["last_role"] = ""
 
+    new.nav_items = build_nav_items(new.form)
     new.status_bar = derive_status_bar(new.form)
     new.editor = FieldEditorState()
     return new

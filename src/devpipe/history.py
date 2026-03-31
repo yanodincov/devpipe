@@ -1,4 +1,4 @@
-"""Run history persistence: store run summaries as YAML files in .devpipe/runs/."""
+"""Run history persistence: store run summaries as YAML files in .devpipe/history/."""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
@@ -81,19 +81,22 @@ class RunHistoryEntry:
         return cls(**data)
 
 
-def save_run_history(entry: RunHistoryEntry, runs_dir: Path) -> None:
-    """Save a run history entry to a YAML file in runs_dir."""
-    runs_dir.mkdir(parents=True, exist_ok=True)
-    file_path = runs_dir / f"{entry.run_id}.devpipe.yml"
-    yaml.dump(entry.to_yaml_dict(), file_path, default_flow_style=False, sort_keys=False)
+def save_run_history(entry: RunHistoryEntry, history_dir: Path) -> None:
+    """Save a run history entry to a YAML file in history_dir."""
+    history_dir.mkdir(parents=True, exist_ok=True)
+    file_path = history_dir / f"{entry.run_id}.devpipe.yml"
+    file_path.write_text(
+        yaml.dump(entry.to_yaml_dict(), default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
-def load_run_history(runs_dir: Path) -> list[RunHistoryEntry]:
-    """Load all run history entries from runs_dir, sorted by timestamp descending."""
+def load_run_history(history_dir: Path) -> list[RunHistoryEntry]:
+    """Load all run history entries from history_dir, sorted by timestamp descending."""
     entries: list[RunHistoryEntry] = []
-    if not runs_dir.exists():
+    if not history_dir.exists():
         return entries
-    for yaml_file in sorted(runs_dir.glob("*.devpipe.yml")):
+    for yaml_file in sorted(history_dir.glob("*.devpipe.yml")):
         try:
             data = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
             if data:
@@ -180,4 +183,3 @@ def load_history() -> list[dict]:
     if not HISTORY_PATH.exists():
         return []
     return yaml.safe_load(HISTORY_PATH.read_text(encoding="utf-8")) or []
-

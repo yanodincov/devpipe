@@ -124,12 +124,12 @@ class HistoryScreen(Screen):
     def compose(self) -> ComposeResult:
         with Horizontal(classes="history-main"):
             yield HistoryList(id="history-list")
-            yield HistoryPreview(id="history-preview")
+            yield HistoryPreview(project_root=self.project_root, id="history-preview")
         yield HistoryStatusBar()
 
     def on_mount(self) -> None:
-        history_runs_dir = self.project_root / ".devpipe" / "runs"
-        entries = load_run_history(history_runs_dir)[:20]
+        history_dir = self.project_root / ".devpipe" / "history"
+        entries = load_run_history(history_dir)[:20]
         hist_list = self.query_one("#history-list", HistoryList)
         hist_list.set_entries(entries)
         if entries:

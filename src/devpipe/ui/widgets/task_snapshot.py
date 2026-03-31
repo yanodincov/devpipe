@@ -1,6 +1,7 @@
 """Shared formatting helpers for task snapshots in the TUI."""
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 from devpipe.ui.state import FieldMeta
@@ -58,22 +59,15 @@ def build_task_snapshot_lines(
     lines: list[str] = []
 
     for key, label in STANDARD_FIELDS:
-        if key not in values and key != "task":
-            continue
         display_val = format_snapshot_value(values.get(key, ""), key=key)
         if key == highlight_key:
             lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
         else:
             lines.append(f"   {label}: {display_val}")
 
-    visible_custom_fields = [
-        (key, label)
-        for key, label in custom_fields
-        if key in values and values.get(key) not in (None, "", [], {})
-    ]
-    if visible_custom_fields:
+    if custom_fields:
         lines.append("\n[dim]── Custom ──[/dim]")
-        for key, label in visible_custom_fields:
+        for key, label in custom_fields:
             display_val = format_snapshot_value(values.get(key, ""), key=key)
             if key == highlight_key:
                 lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
@@ -97,6 +91,35 @@ def custom_fields_from_history_entry(entry: dict[str, Any]) -> list[tuple[str, s
     if isinstance(extra, dict):
         for key in extra:
             result.append((key, key.replace("_", " ").title()))
+    return result
+
+
+def custom_fields_from_profile_history_entry(
+    profile: str,
+    entry: dict[str, Any],
+    project_root: Path | None = None,
+) -> list[tuple[str, str]]:
+    result: list[tuple[str, str]] = []
+    seen: set[str] = set()
+
+    def _append(key: str, label: str) -> None:
+        if key == "tags" or key in seen:
+            return
+        result.append((key, label))
+        seen.add(key)
+
+    try:
+        from devpipe.ui.services import load_profile_fields
+
+        for field in load_profile_fields(profile, project_root):
+            if field.section == "custom":
+                _append(field.key, field.label)
+    except Exception:
+        pass
+
+    for key, label in custom_fields_from_history_entry(entry):
+        _append(key, label)
+
     return result
 
 

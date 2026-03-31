@@ -100,8 +100,8 @@ def build_stage_envelope(
     prompt = ""
     output_schema = {}
     if stage_spec.agent:
-        prompt = stage_spec.agent.prompt
-        output_schema = stage_spec.agent.output_schema
+        prompt = stage_spec.agent.prompt_content
+        output_schema = stage_spec.agent.schema_content
 
     # Merge stage-specific tags (from profile) with user-provided tags (from config)
     stage_tags = set(stage_spec.tags or [])

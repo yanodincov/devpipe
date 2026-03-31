@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from devpipe.profiles.agent import build_stage_envelope
 from devpipe.profiles.loader import ProfileDefinition, load_profile, ProfileLoadError
+from devpipe.runtime.state import PipelineState
 
 
 class TestProfileLoader:
@@ -205,3 +207,53 @@ routing:
         assert profile.routing.start_stage == "dev"
         # Verify routing stage exists in stages
         assert profile.routing.start_stage in profile.stages
+
+    def test_load_bundled_idea_lab_profile(self):
+        """Test the bundled idea-lab profile loads successfully."""
+        project_root = Path(__file__).resolve().parents[2]
+
+        profile = load_profile("idea-lab", project_root=project_root)
+
+        assert profile.name == "idea-lab"
+        assert list(profile.stages.keys()) == ["intake", "expand", "critique", "refine", "finalize"]
+        assert "task" in profile.inputs
+
+    def test_idea_lab_object_outputs_define_nested_properties(self):
+        """Test bundled idea-lab agent schemas define nested object properties for Codex strict mode."""
+        project_root = Path(__file__).resolve().parents[2]
+
+        profile = load_profile("idea-lab", project_root=project_root)
+
+        for stage_name, stage in profile.stages.items():
+            assert stage.agent is not None
+            schema = stage.agent.schema_content
+            for field_name, field_schema in schema.get("properties", {}).items():
+                if field_schema.get("type") != "object":
+                    continue
+                assert field_schema.get("properties"), (
+                    f"{stage_name}.{field_name} must define nested properties "
+                    "for Codex structured output"
+                )
+
+    def test_build_stage_envelope_uses_loaded_agent_content(self):
+        """Test stage envelope uses prompt_content/schema_content loaded into AgentSpec."""
+        project_root = Path(__file__).resolve().parents[2]
+        profile = load_profile("idea-lab", project_root=project_root)
+        stage = profile.stages["intake"]
+        state = PipelineState.create(
+            task_id="demo-1",
+            task_text="Demo task",
+            selected_runner="codex",
+            run_id="run-1",
+        )
+
+        envelope = build_stage_envelope(
+            stage,
+            state,
+            model_name="gpt-test",
+            effort="medium",
+            project_root=project_root,
+        )
+
+        assert "You are the intake stage" in envelope.instructions
+        assert envelope.output_schema == stage.agent.schema_content

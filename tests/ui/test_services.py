@@ -261,3 +261,94 @@ stages:
     assert len(data["profile_errors"]) >= 1
     # Error message should mention routing or start_stage
     assert any("routing" in err.lower() or "start_stage" in err.lower() or "failed" in err.lower() for err in data["profile_errors"])
+
+
+def test_profile_without_declared_tags_gets_standard_tags_field(tmp_path):
+    devpipe_dir = tmp_path / ".devpipe"
+    profiles_dir = devpipe_dir / "profiles" / "plain-profile"
+    profiles_dir.mkdir(parents=True)
+    (devpipe_dir / "tags" / "go" / "review").mkdir(parents=True)
+
+    (profiles_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: plain-profile
+defaults:
+  runner: auto
+inputs:
+  message:
+    type: string
+    default: ""
+stages:
+  review:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: review
+  by_stage:
+    review:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: plain-profile",
+        encoding="utf-8",
+    )
+
+    data = prepare_initial_state(tmp_path)
+
+    tags_field = next((field for field in data["fields"] if field.key == "tags"), None)
+    assert tags_field is not None
+    assert tags_field.kind == FieldKind.TAG_ROLES
+    assert tags_field.section == "standard"
+    assert data["defaults"]["tags"] == {}
+
+
+def test_profile_without_declared_tags_keeps_profile_inputs_as_custom(tmp_path):
+    devpipe_dir = tmp_path / ".devpipe"
+    profiles_dir = devpipe_dir / "profiles" / "plain-profile"
+    profiles_dir.mkdir(parents=True)
+    (devpipe_dir / "tags" / "go" / "review").mkdir(parents=True)
+
+    (profiles_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: plain-profile
+defaults:
+  runner: auto
+inputs:
+  message:
+    type: string
+    default: ""
+    custom: true
+stages:
+  review:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: review
+  by_stage:
+    review:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: plain-profile",
+        encoding="utf-8",
+    )
+
+    data = prepare_initial_state(tmp_path)
+
+    keys = {field.key: field.section for field in data["fields"]}
+    assert keys["message"] == "custom"
+    assert keys["tags"] == "standard"

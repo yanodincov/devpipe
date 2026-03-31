@@ -1,0 +1,198 @@
+version: 1
+name: idea-lab
+
+defaults:
+  runner: auto
+  model: low
+  effort: low
+  tone: practical
+  depth: 2
+  include_twist: true
+
+inputs:
+  task:
+    type: string
+    required: true
+    default: ""
+    custom: true
+  tone:
+    type: string
+    required: false
+    default: practical
+    values: [practical, playful, bold]
+  depth:
+    type: int
+    required: false
+    default: 2
+    values: [1, 2, 3]
+  include_twist:
+    type: bool
+    required: false
+    default: true
+
+stages:
+  intake:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: intake
+    in:
+      task: input.task
+      tone: input.tone
+      depth: input.depth
+      include_twist: input.include_twist
+      shared_context: context.shared
+    out:
+      concept_brief:
+        type: object
+      category:
+        type: string
+      novelty_score:
+        type: int
+      confidence:
+        type: int
+
+  expand:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: expand
+    in:
+      task: input.task
+      tone: input.tone
+      depth: input.depth
+      include_twist: input.include_twist
+      concept_brief: stage.intake.out.concept_brief
+      category: stage.intake.out.category
+      novelty_score: stage.intake.out.novelty_score
+      shared_context: context.shared
+    out:
+      concept_map:
+        type: object
+      candidate_names:
+        type: object
+      audience_notes:
+        type: object
+      needs_pressure_test:
+        type: bool
+
+  critique:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: critique
+    in:
+      task: input.task
+      depth: input.depth
+      concept_map: stage.expand.out.concept_map
+      candidate_names: stage.expand.out.candidate_names
+      audience_notes: stage.expand.out.audience_notes
+      needs_pressure_test: stage.expand.out.needs_pressure_test
+      confidence: stage.intake.out.confidence
+      novelty_score: stage.intake.out.novelty_score
+      shared_context: context.shared
+    out:
+      strengths:
+        type: object
+      risks:
+        type: object
+      missing_parts:
+        type: object
+      needs_refinement:
+        type: bool
+      readiness_score:
+        type: int
+
+  refine:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: refine
+    in:
+      task: input.task
+      tone: input.tone
+      concept_map: stage.expand.out.concept_map
+      candidate_names: stage.expand.out.candidate_names
+      risks: stage.critique.out.risks
+      missing_parts: stage.critique.out.missing_parts
+      shared_context: context.shared
+    out:
+      revised_concept:
+        type: object
+      change_log:
+        type: object
+      sharper_hook:
+        type: string
+
+  finalize:
+    runner: codex
+    model: low
+    effort: low
+    retry_limit: 1
+    agent:
+      folder: finalize
+    in:
+      task: input.task
+      tone: input.tone
+      concept_brief: stage.intake.out.concept_brief
+      concept_map: stage.expand.out.concept_map
+      candidate_names: stage.expand.out.candidate_names
+      strengths: stage.critique.out.strengths
+      risks: stage.critique.out.risks
+      readiness_score: stage.critique.out.readiness_score
+      revised_concept: stage.refine.out.revised_concept
+      sharper_hook: stage.refine.out.sharper_hook
+      shared_context: context.shared
+    out:
+      final_card:
+        type: object
+      top_name:
+        type: string
+      pitch:
+        type: string
+      next_steps:
+        type: object
+      fun_fact:
+        type: string
+
+routing:
+  start_stage: intake
+  by_stage:
+    intake:
+      next_stages:
+        - stage: expand
+          default: true
+    expand:
+      next_stages:
+        - stage: critique
+          default: true
+    critique:
+      next_stages:
+        - stage: refine
+          all:
+            - field: out.needs_refinement
+              op: eq
+              value: true
+        - stage: finalize
+          all:
+            - field: out.needs_refinement
+              op: eq
+              value: false
+        - stage: finalize
+          default: true
+    refine:
+      next_stages:
+        - stage: finalize
+          default: true
+    finalize:
+      next_stages:
+        - stage: completed
+          default: true

@@ -191,6 +191,25 @@ class TestApplyHistoryEntry:
         assert new.form.values["task_id"] == "MRC-999"
         assert new.form.values["runner"] == "codex"
         assert new.form.values["dataset"] == "s4"
+        assert new.form.field_by_key("dataset") is not None
+
+    def test_adds_missing_custom_fields_from_extra_params(self):
+        state = _loaded_state()
+        entry = {
+            "extra_params": {
+                "dataset": ["s4"],
+                "retry_count": 3,
+            },
+        }
+
+        new = apply_history_entry(state, entry)
+
+        dataset = new.form.field_by_key("dataset")
+        retry_count = new.form.field_by_key("retry_count")
+        assert dataset is not None
+        assert retry_count is not None
+        assert dataset.kind == FieldKind.ARRAY
+        assert retry_count.kind == FieldKind.INT
 
     def test_resets_invalid_runner(self):
         state = _loaded_state()

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 from textual.app import App
 
+from devpipe.history import RunHistoryEntry
 from devpipe.ui.actions import load_defaults, set_field_value
 from devpipe.ui.app import DevpipeTextualApp
 from devpipe.ui.screens.config_screen import ConfigScreen
+from devpipe.ui.screens.history_screen import HistoryScreen
 from devpipe.ui.run_session import sanitize_output_text
 from devpipe.ui.state import FieldKind, FieldMeta, UIState
 
@@ -242,3 +245,202 @@ def test_cancel_active_run_async_cancels_session_and_joins_worker(tmp_path) -> N
     app.cancel_active_run_async(lambda: calls.append("done"))
 
     assert calls == ["cancel", "join:None", "done"]
+
+
+def test_profile_change_resets_tags_and_uses_new_profile_agents(tmp_path):
+    devpipe_dir = tmp_path / ".devpipe"
+    profile_a_dir = devpipe_dir / "profiles" / "profile-a"
+    profile_b_dir = devpipe_dir / "profiles" / "profile-b"
+    profile_a_dir.mkdir(parents=True)
+    profile_b_dir.mkdir(parents=True)
+    (devpipe_dir / "tags" / "shared-tag" / "legacy_a").mkdir(parents=True)
+    (devpipe_dir / "tags" / "shared-tag" / "legacy_b").mkdir(parents=True)
+    (devpipe_dir / "tags" / "shared-tag" / "legacy_a" / "rules.md").write_text(
+        "legacy a",
+        encoding="utf-8",
+    )
+    (devpipe_dir / "tags" / "shared-tag" / "legacy_b" / "rules.md").write_text(
+        "legacy b",
+        encoding="utf-8",
+    )
+
+    (profile_a_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: profile-a
+defaults:
+  runner: auto
+inputs:
+  message:
+    type: string
+    default: ""
+stages:
+  architect:
+    runner: codex
+    out:
+      result:
+        type: string
+  developer:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: architect
+  by_stage:
+    architect:
+      next_stages:
+        - stage: developer
+          default: true
+    developer:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (profile_b_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: profile-b
+defaults:
+  runner: auto
+inputs:
+  message:
+    type: string
+    default: ""
+stages:
+  review:
+    runner: codex
+    out:
+      result:
+        type: string
+  verify:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: review
+  by_stage:
+    review:
+      next_stages:
+        - stage: verify
+          default: true
+    verify:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: profile-a",
+        encoding="utf-8",
+    )
+
+    app = DevpipeTextualApp(project_root=tmp_path)
+    app._load_initial_state()
+    app._ui_state = set_field_value(app._ui_state, "tags", {"shared-tag": ["architect"]})
+    app._ui_state = set_field_value(app._ui_state, "first_role", "developer")
+    app._ui_state = set_field_value(app._ui_state, "last_role", "developer")
+
+    app.on_config_screen_profile_changed(ConfigScreen.ProfileChanged("profile-b"))
+
+    tags_field = app._ui_state.form.field_by_key("tags")
+    assert tags_field is not None
+    assert app._ui_state.form.values["tags"] == {}
+    assert app._ui_state.form.values["first_role"] == "review"
+    assert app._ui_state.form.values["last_role"] == ""
+    assert tags_field.extra["shared-tag"] == ["review", "verify"]
+
+
+def test_restore_history_entry_switches_to_entry_profile(tmp_path):
+    devpipe_dir = tmp_path / ".devpipe"
+    profile_a_dir = devpipe_dir / "profiles" / "profile-a"
+    profile_b_dir = devpipe_dir / "profiles" / "profile-b"
+    profile_a_dir.mkdir(parents=True)
+    profile_b_dir.mkdir(parents=True)
+
+    (profile_a_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: profile-a
+defaults:
+  runner: auto
+inputs:
+  message:
+    type: string
+    default: ""
+    custom: true
+stages:
+  review:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: review
+  by_stage:
+    review:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (profile_b_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: profile-b
+defaults:
+  runner: auto
+inputs:
+  component:
+    type: string
+    default: ""
+    custom: true
+stages:
+  review:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: review
+  by_stage:
+    review:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+    (devpipe_dir / "config.yaml").write_text(
+        "defaults:\n  profile: profile-a",
+        encoding="utf-8",
+    )
+
+    app = DevpipeTextualApp(project_root=tmp_path)
+    app._load_initial_state()
+
+    entry = RunHistoryEntry(
+        run_id="run-1",
+        timestamp=datetime(2026, 3, 31, 12, 0, 0, tzinfo=timezone.utc),
+        profile="profile-b",
+        config={
+            "task": "Restored task",
+            "runner": "codex",
+            "component": "payments",
+            "extra_params": {"dataset": ["demo"]},
+        },
+        stages=[],
+        summary={"total_duration_seconds": 10, "final_status": "completed"},
+    )
+
+    app.on_history_screen_restore_entry(HistoryScreen.RestoreEntry(entry))
+
+    assert app._ui_state.form.profile == "profile-b"
+    assert app._ui_state.form.values["task"] == "Restored task"
+    assert app._ui_state.form.field_by_key("component") is not None
+    assert app._ui_state.form.values["component"] == "payments"

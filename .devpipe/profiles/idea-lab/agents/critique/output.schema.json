@@ -1,0 +1,48 @@
+{
+  "type": "object",
+  "required": ["strengths", "risks", "missing_parts", "needs_refinement", "readiness_score"],
+  "properties": {
+    "strengths": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "missing_parts": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "needs_refinement": {
+      "type": "boolean"
+    },
+    "readiness_score": {
+      "type": "integer"
+    }
+  }
+}

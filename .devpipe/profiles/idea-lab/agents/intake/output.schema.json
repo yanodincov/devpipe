@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "required": ["concept_brief", "category", "novelty_score", "confidence"],
+  "properties": {
+    "concept_brief": {
+      "type": "object",
+      "required": ["summary", "hook", "raw_direction"],
+      "properties": {
+        "summary": {
+          "type": "string"
+        },
+        "hook": {
+          "type": "string"
+        },
+        "raw_direction": {
+          "type": "string"
+        }
+      }
+    },
+    "category": {
+      "type": "string"
+    },
+    "novelty_score": {
+      "type": "integer"
+    },
+    "confidence": {
+      "type": "integer"
+    }
+  }
+}

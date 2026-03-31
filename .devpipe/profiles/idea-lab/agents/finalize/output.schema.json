@@ -1,0 +1,42 @@
+{
+  "type": "object",
+  "required": ["final_card", "top_name", "pitch", "next_steps", "fun_fact"],
+  "properties": {
+    "final_card": {
+      "type": "object",
+      "required": ["final_summary", "positioning", "best_angle"],
+      "properties": {
+        "final_summary": {
+          "type": "string"
+        },
+        "positioning": {
+          "type": "string"
+        },
+        "best_angle": {
+          "type": "string"
+        }
+      }
+    },
+    "top_name": {
+      "type": "string"
+    },
+    "pitch": {
+      "type": "string"
+    },
+    "next_steps": {
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "fun_fact": {
+      "type": "string"
+    }
+  }
+}

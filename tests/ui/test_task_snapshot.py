@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from devpipe.ui.widgets.task_snapshot import format_snapshot_value
+from devpipe.ui.widgets.task_snapshot import build_task_snapshot_lines, format_snapshot_value
 
 
 def test_format_snapshot_value_truncates_multiline_task() -> None:
@@ -51,3 +51,28 @@ def test_format_snapshot_value_dict_tags() -> None:
 def test_format_snapshot_value_bool() -> None:
     assert format_snapshot_value(True) == "true"
     assert format_snapshot_value(False) == "false"
+
+
+def test_build_task_snapshot_lines_shows_empty_standard_and_custom_fields() -> None:
+    lines = build_task_snapshot_lines(
+        {
+            "profile": "idea-lab",
+            "task": "",
+            "runner": "codex",
+            "model": "",
+            "effort": "",
+            "tags": {},
+            "first_role": "",
+            "last_role": "",
+            "component": "",
+            "dataset": [],
+        },
+        [("component", "Component"), ("dataset", "Dataset")],
+    )
+
+    assert "   Task: [dim](empty)[/dim]" in lines
+    assert "   Model: [dim](empty)[/dim]" in lines
+    assert "   Tags: [dim](empty)[/dim]" in lines
+    assert "\n[dim]── Custom ──[/dim]" in lines
+    assert "   Component: [dim](empty)[/dim]" in lines
+    assert "   Dataset: [dim](empty)[/dim]" in lines

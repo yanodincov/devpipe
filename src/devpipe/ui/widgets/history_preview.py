@@ -4,7 +4,10 @@ Uses render() for Textual 8.x compatibility.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 from devpipe.history import RunHistoryEntry
+from devpipe.ui.widgets.task_snapshot import build_task_snapshot_lines, custom_fields_from_profile_history_entry
 from rich.text import Text
 
 from textual.widget import Widget
@@ -21,8 +24,9 @@ class HistoryPreview(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, project_root: Path | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
+        self._project_root = project_root or Path.cwd()
         self._markup: str = "[dim]Select an entry[/dim]"
 
     def render(self) -> Text:
@@ -30,27 +34,18 @@ class HistoryPreview(Widget):
 
     def show_entry(self, entry: RunHistoryEntry) -> None:
         """Render a history entry preview."""
-        cfg = entry.config
-        lines = [f"[bold cyan]╸ {entry.profile}[/bold cyan]\n"]
-        lines.append(f"Task: {cfg.get('task', '') or '(no description)'}")
-        lines.append(f"Task ID: {cfg.get('task_id', '')}")
-        lines.append(f"Runner: {cfg.get('runner', 'auto')}  Model: {cfg.get('model', 'auto')}  Effort: {cfg.get('effort', 'auto')}")
-        tags = cfg.get("tags", [])
-        if tags:
-            lines.append(f"Tags: {', '.join(tags)}")
-        lines.append("")
-        lines.append("[dim]── Stages ──[/dim]")
-        for stage in entry.stages:
-            icon = "✓" if stage.status == "completed" else "✗" if stage.status == "failed" else "⏸"
-            lines.append(f"{icon} {stage.name}: {stage.status}")
-            if stage.output:
-                # Show a brief glimpse of output keys
-                keys = list(stage.output.keys())
-                if keys:
-                    lines.append(f"   outputs: {', '.join(keys)}")
+        snapshot_values = dict(entry.config)
+        extra_params = snapshot_values.get("extra_params", {})
+        if isinstance(extra_params, dict):
+            snapshot_values.update(extra_params)
+        snapshot_values["profile"] = entry.profile
+        lines = build_task_snapshot_lines(
+            snapshot_values,
+            custom_fields_from_profile_history_entry(entry.profile, entry.config, self._project_root),
+        )
         lines.append("")
         lines.append(f"[dim]Started: {entry.timestamp.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
-        lines.append(f"[dim]Duration: {entry.summary.get('total_duration_seconds', 0):.1f}s  Status: {entry.summary.get('final_status')}[/dim]")
+        lines.append(f"[dim]Duration: {entry.summary.get('total_duration_seconds', 0):.1f}s[/dim]")
 
         self._markup = "\n".join(lines)
         self.refresh()

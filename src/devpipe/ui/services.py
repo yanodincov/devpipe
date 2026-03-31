@@ -634,6 +634,33 @@ def get_dynamic_tag_fields(
     return []
 
 
+def _build_tags_field(
+    available_tags: dict[str, Any],
+    profile_stages: list[str],
+    default: Any = None,
+) -> FieldMeta:
+    tag_roles_extra: dict[str, list[str]] = {}
+    for tag_name in available_tags:
+        tag_def = available_tags.get(tag_name)
+        if profile_stages:
+            tag_roles_extra[tag_name] = list(profile_stages)
+        elif tag_def and tag_def.stages:
+            tag_roles_extra[tag_name] = tag_def.stages
+        else:
+            tag_roles_extra[tag_name] = profile_stages
+
+    return FieldMeta(
+        key="tags",
+        label=_key_to_label("tags"),
+        kind=FieldKind.TAG_ROLES,
+        required=False,
+        options=sorted(available_tags.keys()),
+        default=_normalize_tag_roles_defaults(default, available_tags),
+        extra=tag_roles_extra,
+        section="standard",
+    )
+
+
 def _convert_inputs_to_fields(inputs: dict[str, Any], project_root: Path | None = None, profile: Any = None) -> list[FieldMeta]:
     """Convert InputSpec objects (from loader) to FieldMeta list for UI.
 
@@ -647,6 +674,7 @@ def _convert_inputs_to_fields(inputs: dict[str, Any], project_root: Path | None 
 
     fields: list[FieldMeta] = []
     available_tags = None
+    has_tags_field = False
 
     for key, spec in inputs.items():
         if key in _STANDARD_KEYS:
@@ -663,24 +691,8 @@ def _convert_inputs_to_fields(inputs: dict[str, Any], project_root: Path | None 
             if available_tags is None:
                 available_tags = load_available_tags(project_root)
             profile_stages = list(profile.stages.keys()) if profile is not None else []
-            tag_roles_extra: dict[str, list[str]] = {}
-            for tag_name in available_tags:
-                tag_def = available_tags.get(tag_name)
-                if tag_def and tag_def.stages:
-                    tag_roles_extra[tag_name] = tag_def.stages
-                else:
-                    tag_roles_extra[tag_name] = profile_stages
-            default_tag_roles = _normalize_tag_roles_defaults(default, available_tags)
-            fields.append(FieldMeta(
-                key=key,
-                label=_key_to_label(key),
-                kind=FieldKind.TAG_ROLES,
-                required=False,
-                options=sorted(available_tags.keys()),
-                default=default_tag_roles,
-                extra=tag_roles_extra,
-                section="standard",
-            ))
+            fields.append(_build_tags_field(available_tags, profile_stages, default))
+            has_tags_field = True
             continue
 
         # Determine field kind based on type and options
@@ -724,4 +736,11 @@ def _convert_inputs_to_fields(inputs: dict[str, Any], project_root: Path | None 
             section="custom",
             custom=custom if type_str != "bool" else False,
         ))
+
+    if not has_tags_field:
+        if available_tags is None:
+            available_tags = load_available_tags(project_root)
+        profile_stages = list(profile.stages.keys()) if profile is not None else []
+        fields.append(_build_tags_field(available_tags, profile_stages))
+
     return fields

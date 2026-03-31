@@ -42,6 +42,107 @@ class RunConfig:
     last_role: str | None = None
 
 
+def _get_nested_value(data: object, path: list[str]) -> object | None:
+    current = data
+    for part in path:
+        if isinstance(current, dict) and part in current:
+            current = current[part]
+        else:
+            return None
+    return current
+
+
+def _resolve_route_field(
+    field_path: str,
+    *,
+    current_output: dict[str, object],
+    state: PipelineState,
+    config: RunConfig,
+) -> object | None:
+    if field_path.startswith("out."):
+        return _get_nested_value(current_output, field_path.split(".")[1:])
+    if field_path.startswith("input."):
+        return getattr(config, field_path.split(".", 1)[1], None)
+    if field_path.startswith("context."):
+        return _get_nested_value(state.shared_context, field_path.split(".")[1:])
+    if field_path.startswith("runtime."):
+        return _get_nested_value(state.release_context, field_path.split(".")[1:])
+    if field_path.startswith("integration."):
+        return _get_nested_value(state.shared_context, field_path.split(".")[1:])
+    if field_path.startswith("stage."):
+        parts = field_path.split(".")
+        if len(parts) >= 4 and parts[2] == "out":
+            stage_name = parts[1]
+            stage_output = state.artifacts.get("stage_outputs", {}).get(stage_name, {})
+            return _get_nested_value(stage_output, parts[3:])
+    return None
+
+
+def _matches_condition(actual: object | None, op: str, expected: object) -> bool:
+    if op == "eq":
+        return actual == expected
+    if op == "neq":
+        return actual != expected
+    if actual is None:
+        return False
+    if op == "gt":
+        return actual > expected
+    if op == "gte":
+        return actual >= expected
+    if op == "lt":
+        return actual < expected
+    if op == "lte":
+        return actual <= expected
+    if op == "in":
+        return isinstance(expected, list) and actual in expected
+    if op == "contains":
+        if isinstance(actual, (list, tuple, set, str)):
+            return expected in actual
+        return False
+    return False
+
+
+def _resolve_next_stage_from_rules(
+    profile: ProfileDefinition,
+    current_stage: str,
+    *,
+    current_output: dict[str, object],
+    state: PipelineState,
+    config: RunConfig,
+) -> str:
+    stage_routing = profile.routing.by_stage.get(current_stage)
+    if stage_routing is None:
+        return "completed"
+
+    default_stage: str | None = None
+    for rule in stage_routing.next_stages:
+        if rule.default:
+            default_stage = rule.stage
+            continue
+
+        if rule.all and all(
+            _matches_condition(
+                _resolve_route_field(cond.field, current_output=current_output, state=state, config=config),
+                cond.op,
+                cond.value,
+            )
+            for cond in rule.all
+        ):
+            return rule.stage
+
+        if rule.any and any(
+            _matches_condition(
+                _resolve_route_field(cond.field, current_output=current_output, state=state, config=config),
+                cond.op,
+                cond.value,
+            )
+            for cond in rule.any
+        ):
+            return rule.stage
+
+    return default_stage or "completed"
+
+
 class OrchestratorApp:
     def __init__(
         self,
@@ -249,6 +350,19 @@ class OrchestratorApp:
                         "status": "failed",
                         "error_message": str(exc)
                     })
+                    logger.log_stage_failure(
+                        stage_spec.name,
+                        {
+                            "stage": stage_spec.name,
+                            "runner": actual_runner_name,
+                            "model": resolved_model,
+                            "effort": resolved_effort,
+                            "error": str(exc),
+                            "config": config.__dict__,
+                            "context": stage_context,
+                            "output_schema": envelope.output_schema,
+                        },
+                    )
                     if self._cancel_requested.is_set():
                         state.status = "cancelled"
                         logger.write_summary(state)
@@ -288,7 +402,23 @@ class OrchestratorApp:
                 if on_stage_complete is not None:
                     on_stage_complete(stage_spec.name, result.structured_output)
 
-                success = Event(EventType.STAGE_COMPLETED, stage=stage_spec.name, summary=result.summary)
+                if stage_spec.name == last_stage:
+                    next_stage = "completed"
+                else:
+                    next_stage = _resolve_next_stage_from_rules(
+                        profile,
+                        stage_spec.name,
+                        current_output=result.structured_output,
+                        state=state,
+                        config=config,
+                    )
+
+                success = Event(
+                    EventType.STAGE_COMPLETED,
+                    stage=stage_spec.name,
+                    summary=result.summary,
+                    payload={"next_stage": next_stage},
+                )
                 logger.log_event(success)
                 state = engine.apply(state, success)
                 logger.write_summary(state)
@@ -342,8 +472,8 @@ class OrchestratorApp:
                 stages=stage_run_objects,
                 summary=summary,
             )
-            history_runs_dir = self.project_root / ".devpipe" / "runs"
-            save_run_history(entry, history_runs_dir)
+            history_dir = self.project_root / ".devpipe" / "history"
+            save_run_history(entry, history_dir)
 
         return state
 

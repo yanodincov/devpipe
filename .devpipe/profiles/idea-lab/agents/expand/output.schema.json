@@ -1,0 +1,54 @@
+{
+  "type": "object",
+  "required": ["concept_map", "candidate_names", "audience_notes", "needs_pressure_test"],
+  "properties": {
+    "concept_map": {
+      "type": "object",
+      "required": ["angles", "differentiators"],
+      "properties": {
+        "angles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "differentiators": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "candidate_names": {
+      "type": "object",
+      "required": ["options", "preferred"],
+      "properties": {
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "preferred": {
+          "type": "string"
+        }
+      }
+    },
+    "audience_notes": {
+      "type": "object",
+      "required": ["audience", "usage_context"],
+      "properties": {
+        "audience": {
+          "type": "string"
+        },
+        "usage_context": {
+          "type": "string"
+        }
+      }
+    },
+    "needs_pressure_test": {
+      "type": "boolean"
+    }
+  }
+}

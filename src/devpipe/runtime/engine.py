@@ -33,7 +33,7 @@ class PipelineEngine:
         if event.event_type == EventType.STAGE_COMPLETED:
             if event.stage:
                 new_state.artifacts.setdefault("stage_summaries", {})[event.stage] = event.summary
-            upcoming = self.get_next_stage(event.stage or new_state.current_stage)
+            upcoming = str(event.payload.get("next_stage") or self.get_next_stage(event.stage or new_state.current_stage))
             if upcoming == "completed":
                 new_state.status = "completed"
                 new_state.current_stage = "completed"

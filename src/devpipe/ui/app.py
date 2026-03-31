@@ -164,6 +164,10 @@ class DevpipeTextualApp(App):
 
     def on_history_screen_restore_entry(self, event: HistoryScreen.RestoreEntry) -> None:
         """Restore history entry into form state."""
+        target_profile = getattr(event.entry, "profile", "") if event.entry is not None else ""
+        if target_profile and target_profile != self._ui_state.form.profile:
+            self.on_config_screen_profile_changed(ConfigScreen.ProfileChanged(target_profile))
+
         self._ui_state = apply_history_entry(self._ui_state, event.entry)
         # After restoring, recalc derived fields (e.g., dynamic tag params) if needed
         # This ensures that tag parameters are added to fields based on restored tags

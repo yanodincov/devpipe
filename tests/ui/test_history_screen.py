@@ -9,6 +9,7 @@ from devpipe.ui.screens.history_screen import HistoryList
 from devpipe.ui.actions import apply_history_entry, load_defaults
 from devpipe.ui.state import FieldKind, FieldMeta, UIState
 from devpipe.ui.widgets.history_preview import HistoryPreview
+from devpipe.ui.widgets.task_snapshot import build_task_snapshot_lines, custom_fields_from_history_entry
 
 
 def _make_entry(**overrides) -> RunHistoryEntry:
@@ -172,12 +173,92 @@ def test_history_preview_matches_form_snapshot_layout() -> None:
     preview.show_entry(entry)
 
     rendered = preview.render().plain
+    snapshot_values = dict(entry.config)
+    snapshot_values.update(entry.config.get("extra_params", {}))
+    snapshot_values["profile"] = entry.profile
+    expected_lines = build_task_snapshot_lines(
+        snapshot_values,
+        custom_fields_from_history_entry(entry.config),
+    )
 
-    assert "Task: Build feature X" in rendered
-    assert "Runner: codex" in rendered
-    assert "Model: high" in rendered
-    assert "Effort: extra" in rendered
-    assert "Tags: go" in rendered
-    assert "current-delivery" in rendered  # profile name appears in header
+    for line in expected_lines:
+        assert line.replace("[dim]", "").replace("[/dim]", "").replace("[bold]", "").replace("[/bold]", "") in rendered
     assert "Started: 2026-03-27 12:00:00" in rendered
     assert "Duration: 240.0s" in rendered
+    assert "── Stages ──" not in rendered
+    assert "Status:" not in rendered
+    assert "Dataset: full" in rendered
+
+
+def test_history_preview_shows_empty_custom_fields_from_profile(tmp_path) -> None:
+    profile_dir = tmp_path / ".devpipe" / "profiles" / "idea-lab"
+    profile_dir.mkdir(parents=True)
+    (profile_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: idea-lab
+defaults:
+  runner: auto
+inputs:
+  component:
+    type: string
+    default: ""
+  dataset:
+    type: array
+    default: []
+stages:
+  review:
+    runner: codex
+    out:
+      result:
+        type: string
+routing:
+  start_stage: review
+  by_stage:
+    review:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    preview = HistoryPreview(project_root=tmp_path)
+    entry = _make_entry(
+        profile="idea-lab",
+        config={
+            "task": "Build feature X",
+            "runner": "codex",
+            "model": "",
+            "effort": "",
+            "tags": {},
+            "first_role": "",
+            "last_role": "",
+        },
+    )
+
+    preview.show_entry(entry)
+
+    rendered = preview.render().plain
+
+    assert "Component: (empty)" in rendered
+    assert "Dataset: (empty)" in rendered
+
+
+def test_history_screen_reads_entries_from_history_dir(tmp_path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_load_run_history(path):
+        captured["path"] = path
+        return []
+
+    monkeypatch.setattr("devpipe.ui.screens.history_screen.load_run_history", fake_load_run_history)
+
+    from devpipe.ui.screens.history_screen import HistoryScreen
+    from devpipe.ui.state import UIState
+
+    screen = HistoryScreen(UIState(), project_root=tmp_path)
+    screen.query_one = lambda *args, **kwargs: HistoryList()  # type: ignore[method-assign]
+    screen.on_mount()
+
+    assert captured["path"] == tmp_path / ".devpipe" / "history"
