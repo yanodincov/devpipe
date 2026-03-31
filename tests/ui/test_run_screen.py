@@ -5,6 +5,7 @@ from time import monotonic
 from types import SimpleNamespace
 
 import pytest
+from rich.panel import Panel
 
 from devpipe.ui.actions import (
     append_run_output,
@@ -173,11 +174,12 @@ def test_stage_strip_shows_current_pending_step_before_first_start() -> None:
 def test_run_status_bar_shows_model_effort_and_total_time() -> None:
     bar = RunStatusBar()
 
-    bar.update_run_state(status="running", elapsed="1m 24s", model="gpt-5", effort="high")
+    bar.update_run_state(status="running", elapsed="1m 24s", runner="claude", model="gpt-5", effort="high")
 
     rendered = bar.render().plain
 
     assert "running" in rendered
+    assert "runner claude" in rendered
     assert "model gpt-5" in rendered
     assert "effort high" in rendered
     assert "1m 24s" in rendered
@@ -206,7 +208,7 @@ def test_question_panel_has_placeholder() -> None:
     panel = RunQuestionPanel()
     widgets = list(panel.compose())
 
-    assert widgets[0].render().plain == "Question"
+    assert widgets[0].render().plain == "Questions"
     assert "No active question yet" in widgets[1].render().plain
 
 
@@ -214,7 +216,18 @@ def test_log_panel_title_matches_screen_style() -> None:
     panel = LogPanel()
     title = next(panel.compose())
 
-    assert "Output" == title.render().plain
+    assert "Activity Feed" == title.render().plain
+
+
+def test_run_screen_compose_uses_single_column_console_layout() -> None:
+    screen = RunScreen(_make_state())
+
+    widgets = list(screen.compose())
+
+    assert len(widgets) == 3
+    assert isinstance(widgets[0], RunStageStrip)
+    assert isinstance(widgets[1], LogPanel)
+    assert isinstance(widgets[2], RunStatusBar)
 
 
 def test_format_log_chunk_pretty_prints_json_objects() -> None:
@@ -223,7 +236,7 @@ def test_format_log_chunk_pretty_prints_json_objects() -> None:
     assert "Risks" in formatted
     assert "too slow" in formatted
     assert "Items" not in formatted
-    assert "\nNeeds Refinement:" in formatted
+    assert "\n  Needs Refinement:" in formatted
 
 
 def test_format_log_chunk_keeps_command_block_compact() -> None:
@@ -236,9 +249,9 @@ def test_format_log_chunk_keeps_command_block_compact() -> None:
 def test_stage_strip_css_adds_vertical_padding() -> None:
     css = RunStageStrip.DEFAULT_CSS
 
-    assert "padding: 0 2;" in css
-    assert "height: 3;" in css
-    assert "$panel" in css
+    assert "padding: 0 1;" in css
+    assert "height: 1;" in css
+    assert "border-bottom" not in css
 
 
 def test_stage_strip_render_shows_only_steps_row() -> None:
@@ -255,6 +268,12 @@ def test_stage_strip_render_shows_only_steps_row() -> None:
     assert "architect" in rendered
     assert "active" not in rendered
     assert rendered.count("\n") == 0
+
+
+def test_log_panel_css_disables_horizontal_overflow() -> None:
+    css = LogPanel.DEFAULT_CSS
+
+    assert "overflow-x: hidden;" in css
 
 
 def test_run_screen_stage_started_does_not_duplicate_existing_active_attempt() -> None:
@@ -385,12 +404,12 @@ def test_run_screen_formats_finalize_output_as_result_block() -> None:
     screen.on_run_finished("completed", "run-1")
 
     rendered = "\n".join(messages)
-    assert "Final Output" in rendered
+    assert '"final_output"' in rendered
     assert "ClearPR" in rendered
     assert "Build MVP" in rendered
 
 
-def test_format_final_result_uses_card_style_sections() -> None:
+def test_format_final_result_uses_editorial_block_sections() -> None:
     formatted = _format_final_result(
         {
             "headline": "ClearPR",
@@ -403,11 +422,10 @@ def test_format_final_result_uses_card_style_sections() -> None:
         }
     )
 
-    assert formatted.startswith("◆ Final Output")
-    assert "\nHeadline: ClearPR" in formatted
-    assert "\nDetails\n" in formatted
-    assert "• Pilot" in formatted
-    assert "• Measure" in formatted
+    assert formatted.startswith('{"final_output":')
+    assert '"headline": "ClearPR"' in formatted
+    assert '"details": {' in formatted
+    assert '"actions": ["Pilot", "Measure"]' in formatted
 
 
 def test_format_log_chunk_formats_top_level_sections_with_spacing() -> None:
@@ -416,7 +434,7 @@ def test_format_log_chunk_formats_top_level_sections_with_spacing() -> None:
     )
 
     assert "Summary: Cleaner PR communication." in formatted
-    assert "\nDetails\n" in formatted
+    assert "\n  Details\n" in formatted
     assert "• Pilot" in formatted
 
 
@@ -447,6 +465,7 @@ def test_run_status_bar_dims_labels_but_keeps_values_bright() -> None:
     bar.update_run_state(
         status="running",
         elapsed="11s",
+        runner="claude",
         model="gpt-5.3-codex",
         effort="medium",
     )
@@ -461,21 +480,25 @@ def test_run_status_bar_dims_labels_but_keeps_values_bright() -> None:
                 return str(span.style)
         return None
 
+    assert style_at("runner") == "dim"
     assert style_at("model") == "dim"
     assert style_at("effort") == "dim"
+    assert style_at("claude") in {"white", None}
     assert style_at("gpt-5.3-codex") in {"white", None}
     assert style_at("medium") in {"white", None}
 
 
 def test_format_log_renderable_dims_only_property_names() -> None:
     renderable = _format_log_renderable('{"top_name":"ClearPR","pitch":"Friendly reviews"}')
-    assert hasattr(renderable, "spans")
+    assert isinstance(renderable, Panel)
 
-    plain = renderable.plain
+    body = renderable.renderable
+    assert hasattr(body, "spans")
+    plain = body.plain
 
     def style_at(fragment: str) -> str | None:
         offset = plain.index(fragment)
-        for span in renderable.spans:
+        for span in body.spans:
             if span.start <= offset < span.end:
                 return str(span.style)
         return None
@@ -493,9 +516,32 @@ def test_format_pipeline_completion_includes_duration_and_name() -> None:
         final_output={"headline": "ClearPR", "summary": "Cleaner PR communication."},
     )
 
-    assert "Pipeline completed" in formatted
-    assert "Duration: 4m 19s" in formatted
-    assert "Output captured" in formatted
+    assert formatted.startswith('{"status": "completed"')
+    assert '"run": "run-1"' in formatted
+    assert '"duration": "4m 19s"' in formatted
+    assert '"output_captured": true' in formatted
+
+
+def test_format_log_renderable_groups_messages_into_labeled_blocks() -> None:
+    renderable = _format_log_renderable('{"thinking":"Plan the task.","notes":["Keep it small","Return JSON"]}')
+    assert isinstance(renderable, Panel)
+    plain = renderable.renderable.plain
+
+    assert renderable.title.plain == "thinking"
+    assert plain.startswith("  Plan the task.")
+    assert "\n  Notes" in plain
+    assert "Keep it small" in plain
+
+
+def test_format_log_renderable_shows_status_block_without_ugly_icons() -> None:
+    renderable = _format_log_renderable('{"status":"completed","stage":"intake"}')
+    assert isinstance(renderable, Panel)
+    plain = renderable.renderable.plain
+
+    assert renderable.title.plain == "completed"
+    assert "Stage: intake" in plain
+    assert "✓" not in plain
+    assert "✗" not in plain
 
 
 def test_run_screen_shows_cancelled_pipeline_message() -> None:
@@ -526,11 +572,9 @@ def test_run_screen_back_while_running_enters_cancel_confirmation() -> None:
         show_alert=lambda *_a, **_k: None,
         clear_alert=lambda *_a, **_k: None,
     )
-    question = SimpleNamespace(set_mode=lambda *_a, **_k: None)
     stage_strip = SimpleNamespace(set_timeline=lambda *_a, **_k: None, set_spinner_frame=lambda *_a, **_k: None)
     mapping = {
         "#run-stage-strip": stage_strip,
-        "#run-question-panel": question,
         "#run-status": status,
     }
     screen.query_one = lambda selector, *_args, **_kwargs: mapping[selector]  # type: ignore[method-assign]
@@ -550,11 +594,9 @@ def test_run_screen_back_shows_cancel_confirmation_in_status_bar() -> None:
         show_alert=lambda message: calls.append(message),
         clear_alert=lambda: calls.append("clear"),
     )
-    question = SimpleNamespace(set_mode=lambda *_a, **_k: None)
     stage_strip = SimpleNamespace(set_timeline=lambda *_a, **_k: None, set_spinner_frame=lambda *_a, **_k: None)
     mapping = {
         "#run-stage-strip": stage_strip,
-        "#run-question-panel": question,
         "#run-status": status,
     }
     screen.query_one = lambda selector, *_args, **_kwargs: mapping[selector]  # type: ignore[method-assign]
@@ -577,11 +619,9 @@ def test_run_screen_confirm_cancel_uses_app_async_cancel() -> None:
         show_alert=lambda *_a, **_k: None,
         clear_alert=lambda: None,
     )
-    question = SimpleNamespace(set_mode=lambda *_a, **_k: None)
     stage_strip = SimpleNamespace(set_timeline=lambda *_a, **_k: None, set_spinner_frame=lambda *_a, **_k: None)
     mapping = {
         "#run-stage-strip": stage_strip,
-        "#run-question-panel": question,
         "#run-status": status,
     }
     screen.query_one = lambda selector, *_args, **_kwargs: mapping[selector]  # type: ignore[method-assign]
@@ -603,11 +643,9 @@ def test_run_screen_dismiss_cancel_restores_status_bar() -> None:
         show_alert=lambda message: calls.append(message),
         clear_alert=lambda: calls.append("clear"),
     )
-    question = SimpleNamespace(set_mode=lambda *_a, **_k: None)
     stage_strip = SimpleNamespace(set_timeline=lambda *_a, **_k: None, set_spinner_frame=lambda *_a, **_k: None)
     mapping = {
         "#run-stage-strip": stage_strip,
-        "#run-question-panel": question,
         "#run-status": status,
     }
     screen.query_one = lambda selector, *_args, **_kwargs: mapping[selector]  # type: ignore[method-assign]

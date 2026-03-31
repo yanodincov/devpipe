@@ -15,11 +15,11 @@ runners:
     command: ["claude"]
     timeout: 300
     model:
-      low: Haiku 4.5
-      middle: Sonnet 4.6
-      high: Opus 4.6
+      low: haiku
+      middle: sonnet
+      high: opus
     effort:
       low: low
       middle: medium
-      high: hight
-      extra: hight
+      high: high
+      extra: high

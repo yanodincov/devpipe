@@ -73,6 +73,7 @@ class RunStatusBar(Widget):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._status = ""
+        self._runner = ""
         self._model = ""
         self._effort = ""
         self._elapsed = ""
@@ -88,6 +89,11 @@ class RunStatusBar(Widget):
         text.append("  ")
         text.append(self._status or "idle")
         text.append("  ")
+        if self._runner:
+            text.append("runner", style="dim")
+            text.append(" ")
+            text.append(self._runner, style="white")
+            text.append("  ")
         if self._model:
             text.append("model", style="dim")
             text.append(" ")
@@ -106,11 +112,13 @@ class RunStatusBar(Widget):
         self,
         status: str = "",
         elapsed: str = "",
+        runner: str = "",
         model: str = "",
         effort: str = "",
     ) -> None:
         self._status = status
         self._elapsed = elapsed
+        self._runner = runner
         self._model = model
         self._effort = effort
         self.refresh()

@@ -80,35 +80,25 @@ class CodexRunner(BaseCliRunner):
 
     @classmethod
     def _format_agent_message(cls, text: str) -> str:
-        """Format an agent_message text: parse JSON if possible, else show raw."""
+        """Format an agent_message as a structured UI payload."""
         try:
             data = json.loads(text)
         except (json.JSONDecodeError, ValueError):
-            return f"\x1b[0m{text}"
+            return json.dumps({"thinking": text}, ensure_ascii=False)
 
-        _D = "\x1b[2m"    # dim
-        _R = "\x1b[0m"    # reset
-        _Y = "\x1b[33m"   # yellow for labels
-        _W = "\x1b[97m"   # bright white for content
-
-        parts: list[str] = []
-
-        summary = data.get("summary", "")
+        payload: dict[str, object] = {}
+        summary = data.get("summary")
         if summary:
-            parts.append(f"{_W}{summary}{_R}")
-
-        for key, bullet in (("decisions", "◇"), ("plan", "→"), ("risks", "⚠"), ("open_questions", "?")):
-            vals = data.get(key)
-            if not vals:
+            payload["thinking"] = summary
+        for key, value in data.items():
+            if key == "summary":
                 continue
-            parts.append(f"{_Y}{key}{_R}")
-            for i, v in enumerate(vals, 1):
-                if key == "plan":
-                    parts.append(f"  {_D}{i}.{_R} {v}")
-                else:
-                    parts.append(f"  {_D}{bullet}{_R} {v}")
-
-        return "\n".join(parts) if parts else f"\x1b[0m{text}"
+            if value in ("", [], {}, None):
+                continue
+            payload[key] = value
+        if not payload:
+            payload["thinking"] = text
+        return json.dumps(payload, ensure_ascii=False)
 
     @classmethod
     def _format_event(cls, event: dict) -> str | None:
@@ -136,20 +126,20 @@ class CodexRunner(BaseCliRunner):
             is_boring = cls._is_boring_cmd(cmd)
 
             if exit_code is not None and exit_code != 0:
-                cmd_short = cmd[:80] + ("…" if len(cmd) > 80 else "")
-                header = f"\x1b[31m⟫ {cmd_short}  [exit {exit_code}]\x1b[0m"
+                payload: dict[str, object] = {"action": cmd[:80] + ("…" if len(cmd) > 80 else "")}
+                payload["status"] = "failed"
+                payload["exit_code"] = exit_code
             else:
-                header = f"\x1b[2m⟫ {cmd}\x1b[0m"
+                payload = {"action": cmd}
 
             output = item.get("aggregated_output", "").rstrip("\n")
             if is_boring and exit_code in (None, 0) and not is_printf:
                 return None
             if not output:
-                return header
+                return json.dumps(payload, ensure_ascii=False)
 
             if is_printf:
-                # show printf output as plain white text, no header, no truncation
-                return "\x1b[0m" + output + "\x1b[0m"
+                return json.dumps({"output": output}, ensure_ascii=False)
 
             # skip trivially boring commands with no interesting output
             if cmd.strip() in ("true", "false", "") and not output:
@@ -160,12 +150,10 @@ class CodexRunner(BaseCliRunner):
             out_lines = output.splitlines()
             shown = out_lines[:4]
             rest = len(out_lines) - 4
-            result = header
-            for ln in shown:
-                result += f"\n\x1b[2m  {ln}\x1b[0m"
+            payload["result"] = shown if len(shown) > 1 else shown[0]
             if rest > 0:
-                result += f"\n\x1b[2m  … +{rest} lines\x1b[0m"
-            return result
+                payload["more_lines"] = rest
+            return json.dumps(payload, ensure_ascii=False)
 
         if etype == "turn.completed":
             return None

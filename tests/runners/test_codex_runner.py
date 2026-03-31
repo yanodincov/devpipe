@@ -85,6 +85,47 @@ def test_codex_runner_hides_boring_successful_command_output() -> None:
     assert formatted is None
 
 
+def test_codex_runner_formats_agent_message_as_structured_thinking_payload() -> None:
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "agent_message",
+            "text": json.dumps(
+                {
+                    "summary": "I should inspect the repository instructions first.",
+                    "open_questions": ["Need exact schema shape"],
+                }
+            ),
+        },
+    }
+
+    formatted = CodexRunner._format_event(event)
+
+    assert formatted is not None
+    payload = json.loads(formatted)
+    assert payload["thinking"] == "I should inspect the repository instructions first."
+    assert payload["open_questions"] == ["Need exact schema shape"]
+
+
+def test_codex_runner_formats_command_execution_as_action_payload() -> None:
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": "pwd",
+            "exit_code": 0,
+            "aggregated_output": "/Users/test/project\n",
+        },
+    }
+
+    formatted = CodexRunner._format_event(event)
+
+    assert formatted is not None
+    payload = json.loads(formatted)
+    assert payload["action"] == "pwd"
+    assert payload["result"] == "/Users/test/project"
+
+
 def test_codex_runner_run_pty_registers_process_callback(monkeypatch) -> None:
     runner = CodexRunner()
     seen: dict[str, object] = {}

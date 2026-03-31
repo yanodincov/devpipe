@@ -437,7 +437,7 @@ class DevpipeTextualApp(App):
                 screen.on_stage_started(event.stage, event.runner, event.model, event.effort)
             elif event.kind == "stage_completed":
                 screen._state = self._ui_state
-                screen.on_stage_completed(event.stage, event.summary)
+                screen.on_stage_completed(event.stage, event.summary, event.structured_output)
             elif event.kind == "output":
                 screen._state = self._ui_state
                 screen.on_output(event.output_text)

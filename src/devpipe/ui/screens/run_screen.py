@@ -8,12 +8,14 @@ import json
 from time import monotonic
 from typing import Any
 
+from rich import box
+from rich.console import Group
+from rich.panel import Panel
 from rich.text import Text
 
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import RichLog, Static
@@ -50,6 +52,16 @@ def _append_styled_value(text: Text, value: Any, style: str = "white") -> None:
         text.append(str(value), style=style)
 
 
+def _display_value(value: Any) -> str:
+    if value == "":
+        return "(empty)"
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return str(value)
+
+
 def _format_duration(seconds: float) -> str:
     if seconds < 10:
         short = f"{max(0.0, seconds):.1f}".rstrip("0").rstrip(".")
@@ -79,12 +91,12 @@ def _render_data_lines(value: Any, indent: int = 0) -> list[str]:
                 lines.append(f"{prefix}{label}")
                 lines.extend(_render_data_lines(nested, indent + 2))
             else:
-                lines.append(f"{prefix}{label}: {nested}")
+                lines.append(f"{prefix}{label}: {_display_value(nested)}")
         return lines or [f"{prefix}(empty)"]
     if isinstance(value, list):
         bullet = "•" if indent <= 4 else "-"
-        return [f"{prefix}{bullet} {item}" for item in value] or [f"{prefix}(empty)"]
-    return [f"{prefix}{value}"]
+        return [f"{prefix}{bullet} {_display_value(item)}" for item in value] or [f"{prefix}(empty)"]
+    return [f"{prefix}{_display_value(value)}"]
 
 
 def _format_log_chunk(text: str) -> str:
@@ -97,7 +109,35 @@ def _format_log_chunk(text: str) -> str:
         parsed = json.loads(stripped)
     except json.JSONDecodeError:
         return text
-    return "\n".join(_render_data_lines(parsed))
+    return _render_block_lines(parsed)
+
+
+def _message_kind(value: Any) -> tuple[str, Any, dict[str, Any]]:
+    if isinstance(value, dict):
+        if "final_output" in value:
+            primary = value.get("final_output")
+            rest = {k: v for k, v in value.items() if k != "final_output"}
+            return "final output", primary, rest
+        if "status" in value and isinstance(value.get("status"), str):
+            rest = {k: v for k, v in value.items() if k != "status"}
+            return str(value.get("status") or "status"), None, rest
+        for key in ("thinking", "action", "output"):
+            if key in value:
+                primary = value.get(key)
+                rest = {k: v for k, v in value.items() if k != key}
+                return key, primary, rest
+        return "output", None, value
+    return "note", value, {}
+
+
+def _render_block_lines(value: Any) -> str:
+    kind, primary, rest = _message_kind(value)
+    lines = [f"› {kind}"]
+    if primary not in (None, "", [], {}):
+        lines.extend(_render_data_lines(primary, indent=2))
+    if rest:
+        lines.extend(_render_data_lines(rest, indent=2))
+    return "\n".join(lines)
 
 
 def _render_data_text(value: Any, indent: int = 0) -> Text:
@@ -117,7 +157,7 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
             nested = _unwrap_collection_wrapper(nested)
             if _is_empty_value(nested):
                 text.append(": ", style="dim")
-                text.append("(empty)", style="dim")
+                _append_styled_value(text, nested)
                 continue
             if isinstance(nested, (dict, list)):
                 text.append("\n")
@@ -147,34 +187,67 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
     return text
 
 
+def _render_block_text(value: Any) -> Text:
+    kind, primary, rest = _message_kind(value)
+    text = Text()
+    if primary not in (None, "", [], {}):
+        text.append(_render_data_text(primary, indent=2))
+    if rest:
+        if primary not in (None, "", [], {}):
+            text.append("\n")
+        text.append(_render_data_text(rest, indent=2))
+    return text
+
+
+def _render_message_panel(value: Any) -> Panel:
+    kind, _, _ = _message_kind(value)
+    title = Text(kind, style="dim")
+    body = _render_block_text(value)
+    return Panel(
+        body,
+        title=title,
+        title_align="left",
+        border_style="#2a2e39",
+        box=box.SQUARE,
+        padding=(0, 1),
+        expand=True,
+    )
+
+
 def _format_log_renderable(text: str) -> str | Text:
     stripped = text.strip()
     if not stripped:
         return ""
     if stripped.startswith("⟫ "):
-        return text.rstrip()
+        return _render_message_panel({"action": stripped[2:].strip()})
+    if stripped.startswith("▶ Started:"):
+        return _render_message_panel({"status": "started", "stage": stripped.split(":", 1)[1].strip()})
+    if stripped.startswith("✓ Completed:"):
+        return _render_message_panel({"status": "completed", "stage": stripped.split(":", 1)[1].strip()})
+    if stripped.startswith("✗ Failed:"):
+        parts = stripped.split("\n", 1)
+        payload: dict[str, Any] = {"status": "failed", "stage": parts[0].split(":", 1)[1].strip()}
+        if len(parts) > 1 and parts[1].strip():
+            payload["error"] = parts[1].strip()
+        return _render_message_panel(payload)
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError:
-        return text
-    renderable = _render_data_text(parsed)
-    renderable.append("\n")
-    return renderable
+        return _render_message_panel({"note": stripped})
+    return _render_message_panel(parsed)
 
 
 def _format_final_result(output: dict[str, Any]) -> str:
-    lines = ["◆ Final Output", ""]
-    lines.extend(_render_data_lines(output))
-    return "\n".join(lines)
+    return json.dumps({"final_output": output}, ensure_ascii=False)
 
 
 def _format_pipeline_completion(run_id: str, elapsed: str, final_output: dict[str, Any] | None = None) -> str:
-    lines = ["✓ Pipeline completed", f"  Run: {run_id}"]
+    payload: dict[str, Any] = {"status": "completed", "run": run_id}
     if elapsed:
-        lines.append(f"  Duration: {elapsed}")
+        payload["duration"] = elapsed
     if isinstance(final_output, dict) and final_output:
-        lines.append("  Output captured")
-    return "\n".join(lines)
+        payload["output_captured"] = True
+    return json.dumps(payload, ensure_ascii=False)
 
 
 class RunStageStrip(Widget):
@@ -182,10 +255,9 @@ class RunStageStrip(Widget):
 
     DEFAULT_CSS = """
     RunStageStrip {
-        height: 3;
-        padding: 0 2;
-        background: $panel;
-        border-bottom: solid $primary-darken-3;
+        height: 1;
+        padding: 0 1;
+        background: transparent;
     }
     """
 
@@ -220,9 +292,9 @@ class RunStageStrip(Widget):
 
     def _icon_and_style(self, attempt: StageAttempt) -> tuple[str, str]:
         if attempt.status == "done":
-            return "✓", "bold #9ece6a"
+            return "·", "bold white"
         if attempt.status == "failed":
-            return "✗", "bold #f7768e"
+            return "·", "bold #f7768e"
         return self._spinner_frame, "bold #7dcfff"
 
     def set_timeline(self, timeline: list[StageAttempt]) -> None:
@@ -241,18 +313,23 @@ class RunQuestionPanel(Widget):
     RunQuestionPanel {
         width: 28;
         min-width: 24;
-        background: $surface;
+        background: $panel;
         border-right: solid $primary-darken-3;
-        padding: 0;
+        padding: 1 1 0 1;
     }
     RunQuestionPanel .question-title {
         height: 1;
-        padding: 0 2;
+        padding: 0 1;
         color: $text-muted;
-        background: $surface;
+        background: #161922;
+        border: round #2a2e39;
+        content-align: left middle;
     }
     RunQuestionPanel .question-body {
+        margin-top: 1;
         padding: 1 2;
+        border: round #2a2e39;
+        background: #12141b;
     }
     """
 
@@ -262,7 +339,7 @@ class RunQuestionPanel(Widget):
         self.set_mode("idle")
 
     def compose(self) -> ComposeResult:
-        yield Static("Question", classes="question-title")
+        yield Static("Questions", classes="question-title")
         yield Static(self._body_markup, classes="question-body", id="question-body")
 
     def set_mode(self, mode: str) -> None:
@@ -306,25 +383,33 @@ class LogPanel(Widget, can_focus=True):
     LogPanel {
         width: 1fr;
         background: $panel;
-        padding: 0;
+        padding: 0 1 0 1;
     }
     LogPanel .log-title {
         height: 1;
-        padding: 0 2;
+        padding: 0 1;
         color: $text-muted;
-        background: $surface;
+        background: #161922;
+        border: round #2a2e39;
+        content-align: left middle;
     }
     LogPanel RichLog {
+        margin-top: 1;
         height: 1fr;
+        padding: 0 1;
+        background: #12141b;
+        border: round #2a2e39;
+        overflow-x: hidden;
     }
     """
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._follow_tail: bool = True
+        self._has_entries: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Output", classes="log-title")
+        yield Static("Activity Feed", classes="log-title")
         yield RunLogOutput(highlight=True, markup=False, wrap=True, id="log-output")
 
     def append(self, text: str) -> None:
@@ -334,9 +419,15 @@ class LogPanel(Widget, can_focus=True):
             if isinstance(payload, str):
                 if payload and not payload.endswith("\n"):
                     payload += "\n"
+                if self._has_entries and payload:
+                    payload = "\n" + payload
                 log.write(payload, scroll_end=self._follow_tail, animate=False)
             elif payload:
+                if self._has_entries:
+                    payload = Group(Text(""), payload)
                 log.write(payload, scroll_end=self._follow_tail, animate=False)
+            if payload:
+                self._has_entries = True
         except Exception:
             pass
 
@@ -344,6 +435,7 @@ class LogPanel(Widget, can_focus=True):
         try:
             log = self.query_one("#log-output", RichLog)
             log.clear()
+            self._has_entries = False
         except Exception:
             pass
 
@@ -386,12 +478,6 @@ class RunScreen(Screen):
     RunScreen {
         layout: vertical;
     }
-    RunScreen .run-body {
-        height: 1fr;
-    }
-    RunScreen .run-main {
-        height: 1fr;
-    }
     """
 
     def __init__(self, ui_state: UIState, **kwargs) -> None:
@@ -406,9 +492,7 @@ class RunScreen(Screen):
 
     def compose(self) -> ComposeResult:
         yield RunStageStrip(id="run-stage-strip")
-        with Horizontal(classes="run-body"):
-            yield RunQuestionPanel(id="run-question-panel")
-            yield LogPanel(id="log-panel")
+        yield LogPanel(id="log-panel")
         yield RunStatusBar(id="run-status")
 
     def on_mount(self) -> None:
@@ -422,13 +506,12 @@ class RunScreen(Screen):
         stage_strip = self.query_one("#run-stage-strip", RunStageStrip)
         stage_strip.set_timeline(rv.timeline)
         stage_strip.set_spinner_frame(_SPINNER_FRAMES[self._spinner_index % len(_SPINNER_FRAMES)])
-        question = self.query_one("#run-question-panel", RunQuestionPanel)
-        question.set_mode("idle")
 
         status = self.query_one("#run-status", RunStatusBar)
         status.update_run_state(
             status=rv.status,
             elapsed=_format_duration(rv.elapsed_seconds),
+            runner=rv.runner_name,
             model=rv.model_name,
             effort=rv.effort,
         )

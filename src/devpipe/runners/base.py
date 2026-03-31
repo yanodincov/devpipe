@@ -280,6 +280,8 @@ class BaseCliRunner:
                         stdout=stdout,
                         stderr=stderr,
                     )
+                if self.output_callback and completed.stdout:
+                    self.output_callback(completed.stdout)
         except subprocess.TimeoutExpired as exc:
             self.cancel()
             raise RunnerTimeoutError(str(exc)) from exc
