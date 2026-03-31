@@ -1,6 +1,7 @@
 """Tests for the run screen state and event bridge."""
 from __future__ import annotations
 
+from time import monotonic
 from types import SimpleNamespace
 
 import pytest
@@ -13,7 +14,17 @@ from devpipe.ui.actions import (
     load_defaults,
     start_run,
 )
-from devpipe.ui.screens.run_screen import LogPanel, RunQuestionPanel, RunScreen, RunStageStrip
+from devpipe.ui.screens.run_screen import (
+    LogPanel,
+    RunQuestionPanel,
+    RunScreen,
+    RunStageStrip,
+    _format_duration,
+    _format_final_result,
+    _format_pipeline_completion,
+    _format_log_chunk,
+    _format_log_renderable,
+)
 from devpipe.ui.state import FieldKind, FieldMeta, UIState
 from devpipe.ui.widgets.status_bar import RunStatusBar
 
@@ -141,6 +152,11 @@ def test_stage_strip_shows_only_completed_and_active_steps() -> None:
     assert "8s" in rendered
 
 
+def test_format_duration_keeps_fraction_for_short_steps() -> None:
+    assert _format_duration(0.8) == "0.8s"
+    assert _format_duration(9.4) == "9.4s"
+
+
 def test_stage_strip_shows_current_pending_step_before_first_start() -> None:
     strip = RunStageStrip()
     state = _make_state()
@@ -201,11 +217,44 @@ def test_log_panel_title_matches_screen_style() -> None:
     assert "Output" == title.render().plain
 
 
+def test_format_log_chunk_pretty_prints_json_objects() -> None:
+    formatted = _format_log_chunk('{"risks":{"items":["too slow","too noisy"]},"needs_refinement":false}')
+
+    assert "Risks" in formatted
+    assert "too slow" in formatted
+    assert "Items" not in formatted
+    assert "\nNeeds Refinement:" in formatted
+
+
+def test_format_log_chunk_keeps_command_block_compact() -> None:
+    formatted = _format_log_chunk("⟫ pwd\n/Users/test/project\n\n")
+
+    assert formatted.startswith("⟫ pwd")
+    assert "/Users/test/project" in formatted
+
+
 def test_stage_strip_css_adds_vertical_padding() -> None:
     css = RunStageStrip.DEFAULT_CSS
 
-    assert "padding: 1 2;" in css
-    assert "height: 5;" in css
+    assert "padding: 0 2;" in css
+    assert "height: 3;" in css
+    assert "$panel" in css
+
+
+def test_stage_strip_render_shows_only_steps_row() -> None:
+    strip = RunStageStrip()
+    state = _make_state()
+    state = start_run(state, "run-1", ["architect", "developer"], "codex", "gpt-5", "medium")
+    state = begin_stage(state, "architect", "codex", "gpt-5", "medium")
+    state.run_view.timeline[0].elapsed_seconds = 3.2
+    strip.set_timeline(state.run_view.timeline)
+    strip.set_spinner_frame("⠋")
+
+    rendered = strip.render().plain
+
+    assert "architect" in rendered
+    assert "active" not in rendered
+    assert rendered.count("\n") == 0
 
 
 def test_run_screen_stage_started_does_not_duplicate_existing_active_attempt() -> None:
@@ -228,6 +277,26 @@ def test_run_screen_stage_started_does_not_duplicate_existing_active_attempt() -
     architect_attempts = [attempt for attempt in screen._state.run_view.timeline if attempt.stage == "architect"]
     assert len(architect_attempts) == 1
     assert architect_attempts[0].status == "active"
+
+
+def test_run_screen_stage_started_sets_clock_for_existing_active_attempt() -> None:
+    state = _make_state()
+    state = start_run(state, "run-1", ["architect", "developer"], "codex", "gpt-5", "medium")
+    state = begin_stage(state, "architect", "codex", "gpt-5", "medium")
+    screen = RunScreen(state)
+    screen.query_one = lambda *_args, **_kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        set_timeline=lambda *_a, **_k: None,
+        set_spinner_frame=lambda *_a, **_k: None,
+        update_run_state=lambda *_a, **_k: None,
+        set_mode=lambda *_a, **_k: None,
+        append=lambda *_a, **_k: None,
+        show_alert=lambda *_a, **_k: None,
+        clear_alert=lambda *_a, **_k: None,
+    )
+
+    screen.on_stage_started("architect", "codex", "gpt-5", "medium")
+
+    assert screen._active_stage_started_at is not None
 
 
 def test_log_panel_append_respects_follow_tail_state() -> None:
@@ -264,6 +333,169 @@ def test_run_screen_stage_markers_use_readable_status_messages() -> None:
 
     assert any("Started: architect" in text for text in messages)
     assert any("Completed: architect" in text for text in messages)
+    assert any(text.startswith("\n") for text in messages)
+
+
+def test_run_screen_stage_completed_preserves_elapsed_when_attempt_already_done() -> None:
+    state = _make_state()
+    screen = RunScreen(state)
+    screen.query_one = lambda *_args, **_kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        set_timeline=lambda *_a, **_k: None,
+        set_spinner_frame=lambda *_a, **_k: None,
+        update_run_state=lambda *_a, **_k: None,
+        set_mode=lambda *_a, **_k: None,
+        append=lambda *_a, **_k: None,
+        show_alert=lambda *_a, **_k: None,
+        clear_alert=lambda *_a, **_k: None,
+    )
+    screen._state.run_view.timeline = [
+        SimpleNamespace(stage="architect", status="done", elapsed_seconds=0.0, summary="", error="")
+    ]
+    screen._active_stage_started_at = monotonic() - 2.4
+
+    screen.on_stage_completed("architect", "done")
+
+    assert screen._state.run_view.timeline[0].elapsed_seconds >= 2.0
+
+
+def test_run_screen_formats_finalize_output_as_result_block() -> None:
+    state = _make_state()
+    screen = RunScreen(state)
+    messages: list[str] = []
+    screen.query_one = lambda *_args, **_kwargs: SimpleNamespace(  # type: ignore[method-assign]
+        set_timeline=lambda *_a, **_k: None,
+        set_spinner_frame=lambda *_a, **_k: None,
+        update_run_state=lambda *_a, **_k: None,
+        set_mode=lambda *_a, **_k: None,
+        append=lambda text, *_a, **_k: messages.append(text),
+        show_alert=lambda *_a, **_k: None,
+        clear_alert=lambda *_a, **_k: None,
+    )
+
+    screen._state.run_view.timeline = [SimpleNamespace(stage="review", status="active", elapsed_seconds=0, summary="", error="")]
+    screen.on_stage_completed(
+        "review",
+        "done",
+        {
+            "headline": "ClearPR",
+            "summary": "Turns sharp PR comments into clear, respectful feedback.",
+            "actions": ["Build MVP", "Run pilot"],
+        },
+    )
+    screen.on_run_finished("completed", "run-1")
+
+    rendered = "\n".join(messages)
+    assert "Final Output" in rendered
+    assert "ClearPR" in rendered
+    assert "Build MVP" in rendered
+
+
+def test_format_final_result_uses_card_style_sections() -> None:
+    formatted = _format_final_result(
+        {
+            "headline": "ClearPR",
+            "summary": "Cleaner PR communication.",
+            "details": {
+                "positioning": "Layer above GitHub reviews.",
+                "best_angle": "Less friction per merge.",
+            },
+            "actions": ["Pilot", "Measure"],
+        }
+    )
+
+    assert formatted.startswith("◆ Final Output")
+    assert "\nHeadline: ClearPR" in formatted
+    assert "\nDetails\n" in formatted
+    assert "• Pilot" in formatted
+    assert "• Measure" in formatted
+
+
+def test_format_log_chunk_formats_top_level_sections_with_spacing() -> None:
+    formatted = _format_log_chunk(
+        '{"summary":"Cleaner PR communication.","details":{"positioning":"Layer above GitHub reviews."},"actions":["Pilot","Measure"]}'
+    )
+
+    assert "Summary: Cleaner PR communication." in formatted
+    assert "\nDetails\n" in formatted
+    assert "• Pilot" in formatted
+
+
+def test_format_log_chunk_renders_empty_items_wrapper_as_empty_value() -> None:
+    formatted = _format_log_chunk('{"risks":{"items":[]}}')
+
+    assert "Risks: (empty)" in formatted
+    assert "Items" not in formatted
+
+
+def test_format_log_chunk_renders_empty_strings_as_empty_placeholders() -> None:
+    formatted = _format_log_chunk('{"top_name":"","pitch":"","final_card":{"positioning":""}}')
+
+    assert "Top Name: (empty)" in formatted
+    assert "Pitch: (empty)" in formatted
+    assert "Positioning: (empty)" in formatted
+
+
+def test_run_status_bar_uses_panel_palette() -> None:
+    css = RunStatusBar.DEFAULT_CSS
+
+    assert "$panel" in css
+    assert "$error" in css
+
+
+def test_run_status_bar_dims_labels_but_keeps_values_bright() -> None:
+    bar = RunStatusBar()
+    bar.update_run_state(
+        status="running",
+        elapsed="11s",
+        model="gpt-5.3-codex",
+        effort="medium",
+    )
+
+    rendered = bar.render()
+    plain = rendered.plain
+
+    def style_at(fragment: str) -> str | None:
+        offset = plain.index(fragment)
+        for span in rendered.spans:
+            if span.start <= offset < span.end:
+                return str(span.style)
+        return None
+
+    assert style_at("model") == "dim"
+    assert style_at("effort") == "dim"
+    assert style_at("gpt-5.3-codex") in {"white", None}
+    assert style_at("medium") in {"white", None}
+
+
+def test_format_log_renderable_dims_only_property_names() -> None:
+    renderable = _format_log_renderable('{"top_name":"ClearPR","pitch":"Friendly reviews"}')
+    assert hasattr(renderable, "spans")
+
+    plain = renderable.plain
+
+    def style_at(fragment: str) -> str | None:
+        offset = plain.index(fragment)
+        for span in renderable.spans:
+            if span.start <= offset < span.end:
+                return str(span.style)
+        return None
+
+    assert style_at("Top Name") == "dim"
+    assert style_at("Pitch") == "dim"
+    assert style_at("ClearPR") in {"white", None}
+    assert style_at("Friendly reviews") in {"white", None}
+
+
+def test_format_pipeline_completion_includes_duration_and_name() -> None:
+    formatted = _format_pipeline_completion(
+        run_id="run-1",
+        elapsed="4m 19s",
+        final_output={"headline": "ClearPR", "summary": "Cleaner PR communication."},
+    )
+
+    assert "Pipeline completed" in formatted
+    assert "Duration: 4m 19s" in formatted
+    assert "Output captured" in formatted
 
 
 def test_run_screen_shows_cancelled_pipeline_message() -> None:

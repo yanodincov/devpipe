@@ -61,7 +61,7 @@ class RunStatusBar(Widget):
     RunStatusBar {
         height: 1;
         dock: bottom;
-        background: $primary-darken-3;
+        background: $panel;
         color: $text;
     }
     RunStatusBar.-alert {
@@ -88,14 +88,18 @@ class RunStatusBar(Widget):
         text.append("  ")
         text.append(self._status or "idle")
         text.append("  ")
-        right_parts = []
         if self._model:
-            right_parts.append(f"model {self._model}")
+            text.append("model", style="dim")
+            text.append(" ")
+            text.append(self._model, style="white")
+            text.append("  ")
         if self._effort:
-            right_parts.append(f"effort {self._effort}")
+            text.append("effort", style="dim")
+            text.append(" ")
+            text.append(self._effort, style="white")
+            text.append("  ")
         if self._elapsed:
-            right_parts.append(self._elapsed)
-        text.append("  ".join(right_parts), style="dim")
+            text.append(self._elapsed, style="dim")
         return text
 
     def update_run_state(
