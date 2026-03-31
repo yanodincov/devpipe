@@ -34,14 +34,16 @@ class StatusBar(Widget):
     def render(self) -> Text:
         text = Text()
         text.append(f" {self._left}", style="dim")
-        text.append("  ")
-        text.append(self._center, style="dim")
-        text.append("  ")
-        if self._is_error:
-            text.append(self._right, style="bold red")
-        else:
-            style = "bold green" if self._is_ready else "bold yellow"
-            text.append(self._right, style=style)
+        if self._center:
+            text.append("    ")
+            text.append(self._center, style="dim")
+        if self._right:
+            text.append("    ")
+            if self._is_error:
+                text.append(self._right, style="bold #f7768e")
+            else:
+                style = "bold #9ece6a" if self._is_ready else "bold #e0af68"
+                text.append(self._right, style=style)
         return text
 
     def update_state(self, state: StatusBarState) -> None:
@@ -61,7 +63,7 @@ class RunStatusBar(Widget):
     RunStatusBar {
         height: 1;
         dock: bottom;
-        background: $panel;
+        background: $primary-darken-3;
         color: $text;
     }
     RunStatusBar.-alert {
@@ -85,27 +87,33 @@ class RunStatusBar(Widget):
             return Text(f" {self._alert_message}", style="bold")
 
         text = Text()
-        text.append(" Esc — back", style="dim")
-        text.append("  ")
-        text.append(self._status or "idle")
-        text.append("  ")
+        text.append(" esc back", style="dim")
+        text.append("  f follow", style="dim")
+        text.append("    ")
         if self._runner:
-            text.append("runner", style="dim")
-            text.append(" ")
+            text.append("runner ", style="dim")
             text.append(self._runner, style="white")
             text.append("  ")
         if self._model:
-            text.append("model", style="dim")
-            text.append(" ")
+            text.append("model ", style="dim")
             text.append(self._model, style="white")
             text.append("  ")
         if self._effort:
-            text.append("effort", style="dim")
-            text.append(" ")
+            text.append("effort ", style="dim")
             text.append(self._effort, style="white")
             text.append("  ")
-        if self._elapsed:
-            text.append(self._elapsed, style="dim")
+        if self._status:
+            status = self._status
+            if status == "running":
+                text.append(f"running", style="bold #7aa2f7")
+            elif status == "completed":
+                text.append("completed", style="bold #9ece6a")
+            elif status in ("failed", "cancelled"):
+                text.append(status, style="bold #f7768e")
+            else:
+                text.append(status, style="dim")
+            if self._elapsed:
+                text.append(f"  {self._elapsed}", style="dim")
         return text
 
     def update_run_state(

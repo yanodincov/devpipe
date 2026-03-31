@@ -16,6 +16,7 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
+from textual.containers import Horizontal
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import RichLog, Static
@@ -201,7 +202,7 @@ def _render_block_text(value: Any) -> Text:
 
 def _render_message_panel(value: Any) -> Panel:
     kind, _, _ = _message_kind(value)
-    title = Text(kind, style="dim")
+    title = Text(kind, style="#6b7280")
     body = _render_block_text(value)
     return Panel(
         body,
@@ -211,6 +212,7 @@ def _render_message_panel(value: Any) -> Panel:
         box=box.SQUARE,
         padding=(0, 1),
         expand=True,
+        width=None,
     )
 
 
@@ -250,14 +252,15 @@ def _format_pipeline_completion(run_id: str, elapsed: str, final_output: dict[st
     return json.dumps(payload, ensure_ascii=False)
 
 
-class RunStageStrip(Widget):
-    """Top strip with completed and active stage attempts."""
+class RunStagePanel(Widget):
+    """Left panel with vertical list of stage attempts."""
 
     DEFAULT_CSS = """
-    RunStageStrip {
-        height: 1;
-        padding: 0 1;
-        background: transparent;
+    RunStagePanel {
+        width: 24;
+        background: #1e1e1e;
+        border-right: solid $primary-darken-3;
+        padding: 1 1;
     }
     """
 
@@ -266,36 +269,52 @@ class RunStageStrip(Widget):
         self._timeline: list[StageAttempt] = []
         self._spinner_frame = _SPINNER_FRAMES[0]
 
+    def on_mount(self) -> None:
+        self.styles.background = "#1e1e1e"
+
     def render(self) -> Text:
-        visible_attempts = [attempt for attempt in self._timeline if attempt.status != "pending"]
-        if not visible_attempts and self._timeline:
-            visible_attempts = [self._timeline[0]]
-        if not visible_attempts:
-            return Text.from_markup("[dim]No active steps yet[/dim]")
+        text = Text()
+        text.append("◆ STAGES\n\n", style="bold #7aa2f7")
 
-        cards = []
-        for attempt in visible_attempts:
-            icon, style = self._icon_and_style(attempt)
+        if not self._timeline:
+            text.append("  No active steps yet\n", style="dim")
+            return text
+
+        for attempt in self._timeline:
+            icon, label_style, dur_style = self._icon_and_styles(attempt)
             label = attempt.stage if attempt.attempt_number == 1 else f"{attempt.stage} #{attempt.attempt_number}"
-            cards.append((f"{icon} {label}", _format_duration(attempt.elapsed_seconds), style, attempt.status))
 
-        width = max(16, min(26, max(len(title) for title, _, _, _ in cards) + 6))
-        line = Text()
-        for index, (title, duration, style, status) in enumerate(cards):
-            if index:
-                line.append("  ", style="dim")
-            line.append(title[:width], style=style)
-            line.append(" ", style="dim")
-            duration_style = "bold #7aa2f7" if status == "active" else "dim"
-            line.append(duration, style=duration_style)
-        return line
+            if attempt.status == "active":
+                text.append(f"▶ ", style="bold #7aa2f7")
+                text.append(f"{label}", style="bold #7aa2f7")
+                if attempt.elapsed_seconds > 0:
+                    text.append(f"  {_format_duration(attempt.elapsed_seconds)}", style="bold #7aa2f7")
+                text.append("\n")
+            elif attempt.status == "done":
+                text.append(f"· ", style="dim")
+                text.append(f"{label}", style="dim")
+                if attempt.elapsed_seconds > 0:
+                    text.append(f"  {_format_duration(attempt.elapsed_seconds)}", style="dim")
+                text.append("\n")
+            elif attempt.status == "failed":
+                text.append(f"✗ ", style="bold #f7768e")
+                text.append(f"{label}", style="#f7768e")
+                if attempt.elapsed_seconds > 0:
+                    text.append(f"  {_format_duration(attempt.elapsed_seconds)}", style="dim")
+                text.append("\n")
+            else:
+                text.append(f"  {label}\n", style="dim #484f58")
 
-    def _icon_and_style(self, attempt: StageAttempt) -> tuple[str, str]:
+        return text
+
+    def _icon_and_styles(self, attempt: StageAttempt) -> tuple[str, str, str]:
         if attempt.status == "done":
-            return "·", "bold white"
+            return "·", "dim", "dim"
         if attempt.status == "failed":
-            return "·", "bold #f7768e"
-        return self._spinner_frame, "bold #7dcfff"
+            return "✗", "#f7768e", "dim"
+        if attempt.status == "active":
+            return self._spinner_frame, "bold #7aa2f7", "bold #7aa2f7"
+        return " ", "dim #484f58", "dim"
 
     def set_timeline(self, timeline: list[StageAttempt]) -> None:
         self._timeline = timeline
@@ -361,7 +380,7 @@ class RunQuestionPanel(Widget):
             pass
 
 
-class RunLogOutput(RichLog):
+class RunLogOutput(RichLog, can_focus=False):
     """RichLog that disables follow-tail while the operator scrolls away."""
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
@@ -376,30 +395,29 @@ class RunLogOutput(RichLog):
             self.parent.pause_follow()  # type: ignore[union-attr]
 
 
-class LogPanel(Widget, can_focus=True):
+class LogPanel(Widget, can_focus=False):
     """Log viewer using RichLog."""
 
     DEFAULT_CSS = """
     LogPanel {
         width: 1fr;
-        background: $panel;
-        padding: 0 1 0 1;
-    }
-    LogPanel .log-title {
-        height: 1;
-        padding: 0 1;
-        color: $text-muted;
-        background: #161922;
-        border: round #2a2e39;
-        content-align: left middle;
+        background: #1e1e1e;
+        padding: 0;
+        overflow-x: hidden;
+        scrollbar-size: 0 0;
     }
     LogPanel RichLog {
-        margin-top: 1;
+        width: 1fr;
         height: 1fr;
-        padding: 0 1;
-        background: #12141b;
-        border: round #2a2e39;
+        padding: 0;
+        background: #1e1e1e;
+        tint: transparent;
         overflow-x: hidden;
+        scrollbar-size: 0 0;
+    }
+    LogPanel RichLog:focus {
+        background: #1e1e1e;
+        border: none;
     }
     """
 
@@ -409,8 +427,11 @@ class LogPanel(Widget, can_focus=True):
         self._has_entries: bool = False
 
     def compose(self) -> ComposeResult:
-        yield Static("Activity Feed", classes="log-title")
         yield RunLogOutput(highlight=True, markup=False, wrap=True, id="log-output")
+
+    def on_mount(self) -> None:
+        log = self.query_one("#log-output", RichLog)
+        log.styles.background = "#1e1e1e"
 
     def append(self, text: str) -> None:
         try:
@@ -478,6 +499,21 @@ class RunScreen(Screen):
     RunScreen {
         layout: vertical;
     }
+    RunScreen .run-main {
+        height: 1fr;
+        width: 1fr;
+        background: #1e1e1e;
+    }
+    RunScreen #log-output {
+        background: #1e1e1e;
+        tint: transparent;
+        min-width: 0;
+    }
+    RunScreen #log-output:focus {
+        background: #1e1e1e;
+        background-tint: transparent 0%;
+        tint: transparent;
+    }
     """
 
     def __init__(self, ui_state: UIState, **kwargs) -> None:
@@ -491,8 +527,9 @@ class RunScreen(Screen):
         self._last_stage_output: dict[str, Any] | None = None
 
     def compose(self) -> ComposeResult:
-        yield RunStageStrip(id="run-stage-strip")
-        yield LogPanel(id="log-panel")
+        with Horizontal(classes="run-main"):
+            yield RunStagePanel(id="run-stage-strip")
+            yield LogPanel(id="log-panel")
         yield RunStatusBar(id="run-status")
 
     def on_mount(self) -> None:
@@ -503,7 +540,7 @@ class RunScreen(Screen):
 
     def _update_run_display(self) -> None:
         rv = self._state.run_view
-        stage_strip = self.query_one("#run-stage-strip", RunStageStrip)
+        stage_strip = self.query_one("#run-stage-strip", RunStagePanel)
         stage_strip.set_timeline(rv.timeline)
         stage_strip.set_spinner_frame(_SPINNER_FRAMES[self._spinner_index % len(_SPINNER_FRAMES)])
 

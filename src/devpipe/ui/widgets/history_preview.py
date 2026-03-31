@@ -27,7 +27,7 @@ class HistoryPreview(Widget):
     def __init__(self, project_root: Path | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._project_root = project_root or Path.cwd()
-        self._markup: str = "[dim]Select an entry[/dim]"
+        self._markup: str = "[bold #7aa2f7]◆ PREVIEW[/bold #7aa2f7]\n\n[dim]Select an entry[/dim]"
 
     def render(self) -> Text:
         return Text.from_markup(self._markup)
@@ -39,17 +39,23 @@ class HistoryPreview(Widget):
         if isinstance(extra_params, dict):
             snapshot_values.update(extra_params)
         snapshot_values["profile"] = entry.profile
-        lines = build_task_snapshot_lines(
+        lines = ["[bold #7aa2f7]◆ PREVIEW[/bold #7aa2f7]", ""]
+        lines += build_task_snapshot_lines(
             snapshot_values,
             custom_fields_from_profile_history_entry(entry.profile, entry.config, self._project_root),
         )
         lines.append("")
-        lines.append(f"[dim]Started: {entry.timestamp.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
-        lines.append(f"[dim]Duration: {entry.summary.get('total_duration_seconds', 0):.1f}s[/dim]")
+        lines.append(f"[dim]started    {entry.timestamp.strftime('%Y-%m-%d %H:%M:%S')}[/dim]")
+        duration_s = entry.summary.get("total_duration_seconds", 0)
+        if isinstance(duration_s, (int, float)) and duration_s >= 60:
+            dur = f"{int(duration_s // 60)}m {int(duration_s % 60):02d}s"
+        else:
+            dur = f"{duration_s:.0f}s"
+        lines.append(f"[dim]duration   {dur}[/dim]")
 
         self._markup = "\n".join(lines)
         self.refresh()
 
     def clear(self) -> None:
-        self._markup = "[dim]Select an entry[/dim]"
+        self._markup = "[bold #7aa2f7]◆ PREVIEW[/bold #7aa2f7]\n\n[dim]Select an entry[/dim]"
         self.refresh()

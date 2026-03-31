@@ -48,6 +48,12 @@ class NavList(Widget, can_focus=True):
         super().__init__(**kwargs)
         self._items: list[NavItem] = items or []
 
+    _SECTION_COLORS: dict = {
+        "Standard": "#7aa2f7",
+        "Custom": "#9ece6a",
+        "Actions": "#e0af68",
+    }
+
     def render(self) -> Text:
         """Render the nav list as Rich Text."""
         text = Text()
@@ -60,18 +66,20 @@ class NavList(Widget, can_focus=True):
                 if not first_section:
                     text.append("\n")
                 first_section = False
-                text.append(f"╸ {current_section.value}\n", style="bold dim")
+                color = self._SECTION_COLORS.get(current_section.value, "dim")
+                text.append(f"◆ {current_section.value.upper()}\n", style=f"bold {color}")
 
-            label = f"  {item.label}"
+            label = item.label
             if item.badge:
-                label += f" [{item.badge}]"
+                label += f"  {item.badge}"
 
             if i == self.selected_index:
-                text.append(f"{label}\n", style="reverse bold")
+                text.append("▶ ", style="bold #7aa2f7")
+                text.append(f"{label}\n", style="bold #7aa2f7")
             elif item.is_action:
-                text.append(f"{label}\n", style="cyan")
+                text.append(f"  {label}\n", style="#e0af68")
             else:
-                text.append(f"{label}\n")
+                text.append(f"  {label}\n", style="white")
 
         if not self._items:
             text.append("  (no items)\n", style="dim")

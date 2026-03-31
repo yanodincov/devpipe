@@ -30,7 +30,7 @@ class HistoryList(Widget, can_focus=True):
         max-width: 40;
         background: $surface;
         border-right: solid $primary-darken-3;
-        padding: 1 0;
+        padding: 1 1;
     }
     """
 
@@ -41,16 +41,25 @@ class HistoryList(Widget, can_focus=True):
 
     def render(self) -> Text:
         text = Text()
-        text.append("╸ History\n\n", style="bold dim")
-        available_width = max(12, (self.size.width or 28) - 2)
+        text.append("◆ HISTORY\n\n", style="bold #7aa2f7")
+        available_width = max(12, (self.size.width or 28) - 4)
         for i, entry in enumerate(self._entries):
             task = compact_history_title(entry.config.get("task", "") or "", max_len=available_width)
-            if i == self._selected:
-                text.append(f"» {task}\n", style="bold cyan")
+            ts = entry.timestamp.strftime("%b %d  %H:%M")
+            duration_s = entry.summary.get("total_duration_seconds", 0)
+            if duration_s >= 60:
+                dur = f"{int(duration_s // 60)}m {int(duration_s % 60):02d}s"
             else:
-                text.append(f"{task}\n", style="dim")
+                dur = f"{duration_s:.0f}s"
+            if i == self._selected:
+                text.append("▶ ", style="bold #7aa2f7")
+                text.append(f"{task}\n", style="bold #7aa2f7")
+                text.append(f"  {ts}  {dur}\n", style="dim")
+            else:
+                text.append(f"  {task}\n", style="white")
+                text.append(f"  {ts}  {dur}\n", style="dim #484f58")
         if not self._entries:
-            text.append("No history entries\n", style="dim")
+            text.append("  No history entries\n", style="dim")
         return text
 
     def set_entries(self, entries: list[RunHistoryEntry]) -> None:
@@ -88,7 +97,10 @@ class HistoryStatusBar(Widget):
     """
 
     def render(self) -> Text:
-        return Text.from_markup(" [dim]Enter — restore  ·  Esc — back[/dim]")
+        text = Text()
+        text.append(" ↑↓ navigate  enter restore", style="dim")
+        text.append("    esc back", style="dim")
+        return text
 
 
 class HistoryScreen(Screen):
