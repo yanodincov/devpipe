@@ -86,7 +86,6 @@ def _render_data_lines(value: Any, indent: int = 0) -> list[str]:
             label = _humanize_key(key)
             nested = _unwrap_collection_wrapper(nested)
             if _is_empty_value(nested):
-                lines.append(f"{prefix}{label}: (empty)")
                 continue
             if isinstance(nested, (dict, list)):
                 lines.append(f"{prefix}{label}")
@@ -150,16 +149,16 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
         if not items:
             text.append(f"{prefix}(empty)", style="dim")
             return text
-        for index, (key, nested) in enumerate(items):
-            if index:
-                text.append("\n")
-            text.append(prefix)
-            text.append(_humanize_key(key), style="dim")
+        first = True
+        for key, nested in items:
             nested = _unwrap_collection_wrapper(nested)
             if _is_empty_value(nested):
-                text.append(": ", style="dim")
-                _append_styled_value(text, nested)
                 continue
+            if not first:
+                text.append("\n")
+            first = False
+            text.append(prefix)
+            text.append(_humanize_key(key), style="dim")
             if isinstance(nested, (dict, list)):
                 text.append("\n")
                 text.append(_render_data_text(nested, indent + 2))
@@ -209,14 +208,12 @@ def _render_message_panel(value: Any) -> Panel:
         title=title,
         title_align="left",
         border_style="#2a2e39",
-        box=box.SQUARE,
+        box=box.ROUNDED,
         padding=(0, 1),
-        expand=True,
-        width=None,
     )
 
 
-def _format_log_renderable(text: str) -> str | Text:
+def _format_log_renderable(text: str) -> str | Panel:
     stripped = text.strip()
     if not stripped:
         return ""
@@ -243,10 +240,12 @@ def _format_final_result(output: dict[str, Any]) -> str:
     return json.dumps({"final_output": output}, ensure_ascii=False)
 
 
-def _format_pipeline_completion(run_id: str, elapsed: str, final_output: dict[str, Any] | None = None) -> str:
+def _format_pipeline_completion(run_id: str, elapsed: str, final_output: dict[str, Any] | None = None, total_tokens: int = 0) -> str:
     payload: dict[str, Any] = {"status": "completed", "run": run_id}
     if elapsed:
         payload["duration"] = elapsed
+    if total_tokens > 0:
+        payload["tokens"] = f"~{total_tokens}"
     if isinstance(final_output, dict) and final_output:
         payload["output_captured"] = True
     return json.dumps(payload, ensure_ascii=False)
@@ -257,7 +256,7 @@ class RunStagePanel(Widget):
 
     DEFAULT_CSS = """
     RunStagePanel {
-        width: 24;
+        width: 28;
         background: #1e1e1e;
         border-right: solid $primary-darken-3;
         padding: 1 1;
@@ -281,23 +280,24 @@ class RunStagePanel(Widget):
             return text
 
         for attempt in self._timeline:
-            icon, label_style, dur_style = self._icon_and_styles(attempt)
             label = attempt.stage if attempt.attempt_number == 1 else f"{attempt.stage} #{attempt.attempt_number}"
 
             if attempt.status == "active":
-                text.append(f"▶ ", style="bold #7aa2f7")
+                text.append("▶ ", style="bold #7aa2f7")
                 text.append(f"{label}", style="bold #7aa2f7")
                 if attempt.elapsed_seconds > 0:
                     text.append(f"  {_format_duration(attempt.elapsed_seconds)}", style="bold #7aa2f7")
                 text.append("\n")
             elif attempt.status == "done":
-                text.append(f"· ", style="dim")
+                text.append("· ", style="dim")
                 text.append(f"{label}", style="dim")
                 if attempt.elapsed_seconds > 0:
                     text.append(f"  {_format_duration(attempt.elapsed_seconds)}", style="dim")
+                if attempt.tokens > 0:
+                    text.append(f"  ~{attempt.tokens}t", style="dim #484f58")
                 text.append("\n")
             elif attempt.status == "failed":
-                text.append(f"✗ ", style="bold #f7768e")
+                text.append("✗ ", style="bold #f7768e")
                 text.append(f"{label}", style="#f7768e")
                 if attempt.elapsed_seconds > 0:
                     text.append(f"  {_format_duration(attempt.elapsed_seconds)}", style="dim")
@@ -445,8 +445,8 @@ class LogPanel(Widget, can_focus=False):
                 log.write(payload, scroll_end=self._follow_tail, animate=False)
             elif payload:
                 if self._has_entries:
-                    payload = Group(Text(""), payload)
-                log.write(payload, scroll_end=self._follow_tail, animate=False)
+                    log.write(Text(""), scroll_end=False, animate=False)
+                log.write(payload, expand=True, scroll_end=self._follow_tail, animate=False)
             if payload:
                 self._has_entries = True
         except Exception:
@@ -669,6 +669,7 @@ class RunScreen(Screen):
                     run_id=run_id,
                     elapsed=_format_duration(self._state.run_view.elapsed_seconds),
                     final_output=self._last_stage_output,
+                    total_tokens=self._state.run_view.total_tokens,
                 )
                 + "\n\n"
             )

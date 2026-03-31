@@ -421,6 +421,7 @@ class DevpipeTextualApp(App):
                 event.stage,
                 "done",
                 summary=event.summary,
+                tokens=event.tokens,
             )
         elif event.kind == "output":
             self._ui_state = append_run_output(self._ui_state, event.output_text)

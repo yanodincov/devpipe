@@ -254,6 +254,7 @@ class OrchestratorApp:
         # History tracking
         run_start_time = datetime.now(timezone.utc)
         stage_runs: dict[str, dict] = {}
+        total_tokens: int = 0
 
         logger = RunLogger(self.runs_dir, state.run_id)
         artifacts = ArtifactStore(logger.run_dir)
@@ -384,11 +385,13 @@ class OrchestratorApp:
 
                 # Record successful attempt and mark stage complete
                 attempt_end = datetime.now(timezone.utc)
+                total_tokens += result.tokens
                 stage_entry["attempts"].append({
                     "started_at": attempt_start,
                     "completed_at": attempt_end,
                     "status": "completed",
-                    "output": result.structured_output
+                    "output": result.structured_output,
+                    "tokens": result.tokens,
                 })
                 stage_entry["output"] = result.structured_output
                 stage_entry["completed_at"] = attempt_end
@@ -400,7 +403,7 @@ class OrchestratorApp:
                 state.shared_context[f"{stage_spec.name}_log"] = str(transcript_path)
 
                 if on_stage_complete is not None:
-                    on_stage_complete(stage_spec.name, result.structured_output)
+                    on_stage_complete(stage_spec.name, result.structured_output, tokens=result.tokens)
 
                 if stage_spec.name == last_stage:
                     next_stage = "completed"
@@ -448,6 +451,7 @@ class OrchestratorApp:
                 "stages_completed": stages_completed,
                 "stages_failed": stages_failed,
                 "final_status": state.status,
+                "total_tokens": total_tokens,
             }
 
             # Convert stage_runs dict to ordered list of StageRun objects

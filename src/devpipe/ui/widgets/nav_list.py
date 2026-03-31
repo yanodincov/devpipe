@@ -47,6 +47,7 @@ class NavList(Widget, can_focus=True):
     def __init__(self, items: list[NavItem] | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         self._items: list[NavItem] = items or []
+        self._profile: str = ""
 
     _SECTION_COLORS: dict = {
         "Standard": "#7aa2f7",
@@ -67,7 +68,8 @@ class NavList(Widget, can_focus=True):
                     text.append("\n")
                 first_section = False
                 color = self._SECTION_COLORS.get(current_section.value, "dim")
-                text.append(f"◆ {current_section.value.upper()}\n", style=f"bold {color}")
+                label = "GENERAL" if current_section.value == "Standard" else current_section.value.upper()
+                text.append(f"◆ {label}\n", style=f"bold {color}")
 
             label = item.label
             if item.badge:
@@ -86,9 +88,10 @@ class NavList(Widget, can_focus=True):
 
         return text
 
-    def set_items(self, items: list[NavItem]) -> None:
+    def set_items(self, items: list[NavItem], profile: str = "") -> None:
         """Update the navigation items and re-render."""
         self._items = items
+        self._profile = profile
         if self.selected_index >= len(items):
             self.selected_index = max(0, len(items) - 1)
         self.refresh()

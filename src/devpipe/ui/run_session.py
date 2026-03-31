@@ -31,6 +31,7 @@ class RunEvent:
     status: str = ""
     run_id: str = ""
     structured_output: dict[str, Any] | None = None
+    tokens: int = 0
 
 
 def sanitize_output_text(text: str) -> str:
@@ -67,12 +68,13 @@ class RunSession:
                 effort=effort,
             ))
 
-        def on_stage_complete(stage: str, output: dict) -> None:
+        def on_stage_complete(stage: str, output: dict, tokens: int = 0) -> None:
             on_event(RunEvent(
                 kind="stage_completed",
                 stage=stage,
                 summary=output.get("summary", ""),
                 structured_output=output,
+                tokens=tokens,
             ))
 
         # Wire output callback to runners

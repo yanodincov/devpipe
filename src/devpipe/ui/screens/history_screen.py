@@ -1,4 +1,4 @@
-"""History screen: list of past runs with preview and restore.
+"""History screen: list of past runs with detail view and restore.
 
 Compatible with Textual 8.x.
 """
@@ -21,7 +21,7 @@ from devpipe.ui.widgets.task_snapshot import compact_history_title
 
 
 class HistoryList(Widget, can_focus=True):
-    """Vertical list of history entries."""
+    """Vertical list of history entries with ACTIONS section."""
 
     DEFAULT_CSS = """
     HistoryList {
@@ -30,7 +30,7 @@ class HistoryList(Widget, can_focus=True):
         max-width: 40;
         background: $surface;
         border-right: solid $primary-darken-3;
-        padding: 1 1;
+        padding: 1 0;
     }
     """
 
@@ -47,19 +47,29 @@ class HistoryList(Widget, can_focus=True):
             task = compact_history_title(entry.config.get("task", "") or "", max_len=available_width)
             ts = entry.timestamp.strftime("%b %d  %H:%M")
             duration_s = entry.summary.get("total_duration_seconds", 0)
-            if duration_s >= 60:
+            if isinstance(duration_s, (int, float)) and duration_s >= 60:
                 dur = f"{int(duration_s // 60)}m {int(duration_s % 60):02d}s"
             else:
                 dur = f"{duration_s:.0f}s"
+            tokens = entry.summary.get("total_tokens", 0)
+            meta_parts = [ts, dur]
+            if tokens:
+                meta_parts.append(f"~{tokens:,}t")
+            meta = "  ".join(meta_parts)
             if i == self._selected:
                 text.append("▶ ", style="bold #7aa2f7")
                 text.append(f"{task}\n", style="bold #7aa2f7")
-                text.append(f"  {ts}  {dur}\n", style="dim")
+                text.append(f"  {meta}\n", style="dim")
             else:
                 text.append(f"  {task}\n", style="white")
-                text.append(f"  {ts}  {dur}\n", style="dim #484f58")
+                text.append(f"  {meta}\n", style="dim #484f58")
         if not self._entries:
             text.append("  No history entries\n", style="dim")
+
+        text.append("\n")
+        text.append("◆ ACTIONS\n", style="bold #e0af68")
+        text.append("  Restore\n", style="#e0af68")
+
         return text
 
     def set_entries(self, entries: list[RunHistoryEntry]) -> None:
@@ -98,13 +108,12 @@ class HistoryStatusBar(Widget):
 
     def render(self) -> Text:
         text = Text()
-        text.append(" ↑↓ navigate  enter restore", style="dim")
-        text.append("    esc back", style="dim")
+        text.append(" ↑↓ navigate  enter restore    esc back", style="dim")
         return text
 
 
 class HistoryScreen(Screen):
-    """Screen showing history entries with preview and restore."""
+    """Screen showing history entries with detail view and restore."""
 
     BINDINGS = [
         Binding("up", "nav_up", "Up", show=False),
@@ -145,29 +154,23 @@ class HistoryScreen(Screen):
         hist_list = self.query_one("#history-list", HistoryList)
         hist_list.set_entries(entries)
         if entries:
-            preview = self.query_one("#history-preview", HistoryPreview)
-            preview.show_entry(entries[0])
+            self.query_one("#history-preview", HistoryPreview).show_entry(entries[0])
 
     def action_nav_up(self) -> None:
-        hist_list = self.query_one("#history-list", HistoryList)
-        hist_list.move_up()
-        self._show_preview()
+        self.query_one("#history-list", HistoryList).move_up()
+        self._refresh_preview()
 
     def action_nav_down(self) -> None:
-        hist_list = self.query_one("#history-list", HistoryList)
-        hist_list.move_down()
-        self._show_preview()
+        self.query_one("#history-list", HistoryList).move_down()
+        self._refresh_preview()
 
-    def _show_preview(self) -> None:
-        hist_list = self.query_one("#history-list", HistoryList)
-        entry = hist_list.current_entry
+    def _refresh_preview(self) -> None:
+        entry = self.query_one("#history-list", HistoryList).current_entry
         if entry:
-            preview = self.query_one("#history-preview", HistoryPreview)
-            preview.show_entry(entry)
+            self.query_one("#history-preview", HistoryPreview).show_entry(entry)
 
     def action_restore(self) -> None:
-        hist_list = self.query_one("#history-list", HistoryList)
-        entry = hist_list.current_entry
+        entry = self.query_one("#history-list", HistoryList).current_entry
         if entry:
             self.post_message(self.RestoreEntry(entry))
             self.app.pop_screen()

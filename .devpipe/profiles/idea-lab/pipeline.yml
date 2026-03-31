@@ -108,6 +108,8 @@ stages:
         type: bool
       readiness_score:
         type: int
+      retry_to_start:
+        type: bool
 
   refine:
     runner: codex
@@ -176,16 +178,19 @@ routing:
           default: true
     critique:
       next_stages:
+        - stage: intake
+          all:
+            - field: out.retry_to_start
+              op: eq
+              value: true
         - stage: refine
           all:
+            - field: out.retry_to_start
+              op: eq
+              value: false
             - field: out.needs_refinement
               op: eq
               value: true
-        - stage: finalize
-          all:
-            - field: out.needs_refinement
-              op: eq
-              value: false
         - stage: finalize
           default: true
     refine:

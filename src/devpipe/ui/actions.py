@@ -280,7 +280,7 @@ def apply_history_entry(state: UIState, entry: RunHistoryEntry | dict) -> UIStat
 
 
 def start_run(state: UIState, run_id: str, stages: list[str], runner: str, model: str, effort: str) -> UIState:
-    """Transition to run state."""
+    """Transition to run state. Timeline starts empty — stages are added as they are activated."""
     new = deepcopy(state)
     new.active_screen = "run"
     new.run_view = RunViewState(
@@ -291,8 +291,6 @@ def start_run(state: UIState, run_id: str, stages: list[str], runner: str, model
         model_name=model,
         effort=effort,
     )
-    for s in stages:
-        new.run_view.timeline.append(StageAttempt(stage=s, attempt_number=1, status="pending"))
     return new
 
 
@@ -310,6 +308,7 @@ def complete_stage_attempt(
     status: str = "done",
     summary: str = "",
     error: str = "",
+    tokens: int = 0,
 ) -> UIState:
     """Mark a stage attempt as done/failed in the timeline."""
     new = deepcopy(state)
@@ -318,7 +317,9 @@ def complete_stage_attempt(
             attempt.status = status
             attempt.summary = summary
             attempt.error = error
+            attempt.tokens = tokens
             break
+    new.run_view.total_tokens += tokens
     return new
 
 

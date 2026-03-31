@@ -120,6 +120,7 @@ class StageAttempt:
     summary: str = ""
     error: str = ""
     elapsed_seconds: float = 0.0
+    tokens: int = 0
 
 
 @dataclass
@@ -135,6 +136,7 @@ class RunViewState:
     runner_name: str = ""
     model_name: str = ""
     effort: str = ""
+    total_tokens: int = 0
 
 
 @dataclass

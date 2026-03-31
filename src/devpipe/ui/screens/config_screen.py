@@ -60,7 +60,9 @@ class ConfigScreen(Screen):
 
     def compose(self) -> ComposeResult:
         with Horizontal(classes="config-main"):
-            yield NavList(self._state.nav_items, id="nav-list")
+            nav = NavList(self._state.nav_items, id="nav-list")
+            nav._profile = self._state.form.profile
+            yield nav
             yield DetailPanel(id="detail-panel")
         yield StatusBar(id="status-bar")
 
@@ -73,7 +75,7 @@ class ConfigScreen(Screen):
         detail = self.query_one("#detail-panel", DetailPanel)
         status = self.query_one("#status-bar", StatusBar)
         
-        nav.set_items(self._state.nav_items)
+        nav.set_items(self._state.nav_items, profile=self._state.form.profile)
         nav.selected_index = self._state.selected_nav_index
 
         item = self._state.selected_nav_item

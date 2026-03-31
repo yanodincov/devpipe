@@ -32,6 +32,7 @@ class TaskResult:
     error_type: str | None = None
     error_message: str | None = None
     transcript: str = ""
+    tokens: int = 0
 
 
 def _read(path: Path) -> str:

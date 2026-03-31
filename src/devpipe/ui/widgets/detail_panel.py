@@ -5,6 +5,7 @@ from typing import Any
 
 from rich.text import Text
 
+from textual.events import Resize
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Input, Static, TextArea
@@ -94,6 +95,10 @@ class DetailPanel(Widget):
         """Render the detail panel as Rich Text."""
         return Text.from_markup(self._summary_text)
 
+    def on_resize(self, event: Resize) -> None:
+        if self._current_item is not None and not self._editing:
+            self.show_summary(self._current_item, self._form)
+
     def show_summary(self, item: NavItem, form: FormState) -> None:
         """Display current values for the selected nav item."""
         self._current_item = item
@@ -133,27 +138,15 @@ class DetailPanel(Widget):
             self.refresh()
             return
 
+        panel_width = self.size.width - 4  # subtract padding (1 2)
+
         if item.is_action:
-            lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields)))
-            lines.append("")
-            if item.key == "run":
-                missing = form.missing_required()
-                if missing:
-                    lines.append(f"[bold red]Cannot run:[/bold red] Missing: {', '.join(missing)}")
-                else:
-                    lines.append("[bold green]Ready to run pipeline[/bold green]")
-                    lines.append("\n[dim]Press Enter to start the pipeline[/dim]")
-            elif item.key == "history":
-                lines.append("[dim]Press Enter to open history[/dim]")
+            lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields), panel_width=panel_width))
             self._summary_text = "\n".join(lines)
             self.refresh()
             return
 
-        value = form.values.get(item.key, "")
-        field_meta = form.field_by_key(item.key)
-
-        lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields), item.key))
-        self._add_field_detail(lines, item.key, value, field_meta, form)
+        lines.extend(build_task_snapshot_lines(form.values, custom_fields_from_form(form.fields), item.key, panel_width=panel_width))
 
         self._summary_text = "\n".join(lines)
         self.refresh()
@@ -427,13 +420,6 @@ class DetailPanel(Widget):
 
     def _render_choice_editor(self, label: str, multi: bool) -> str:
         lines = []
-        description, _type_name, _options = self._standard_field_details(self._edit_field, self._form)
-        field_meta = self._form.field_by_key(self._edit_field)
-        if field_meta is not None:
-            description = field_meta.description or description
-        if description:
-            lines.append(f"  [dim]{description}[/dim]")
-            lines.append("")
         for index, option in enumerate(self._editor_options):
             cursor = "▸" if index == self._editor_selected_index else " "
             if multi:

@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "required": ["strengths", "risks", "missing_parts", "needs_refinement", "readiness_score"],
+  "required": ["strengths", "risks", "missing_parts", "needs_refinement", "readiness_score", "retry_to_start"],
   "properties": {
     "strengths": {
       "type": "object",
@@ -43,6 +43,9 @@
     },
     "readiness_score": {
       "type": "integer"
+    },
+    "retry_to_start": {
+      "type": "boolean"
     }
   }
 }

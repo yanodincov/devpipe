@@ -32,6 +32,7 @@ class CodexRunner(BaseCliRunner):
         self._real_output_callback = None
         self._output_file: str | None = None
         self._last_agent_message = ""  # fallback if --output-last-message is empty
+        self._tokens: int = 0
 
     # ── schema transformation ─────────────────────────────────────────────────
 
@@ -100,15 +101,14 @@ class CodexRunner(BaseCliRunner):
             payload["thinking"] = text
         return json.dumps(payload, ensure_ascii=False)
 
-    @classmethod
-    def _format_event(cls, event: dict) -> str | None:
+    def _format_event(self, event: dict) -> str | None:
         etype = event.get("type", "")
         item = event.get("item", {})
         itype = item.get("type", "")
 
         if etype == "item.completed" and itype == "agent_message":
             text = item.get("text", "").strip()
-            return cls._format_agent_message(text) if text else None
+            return self._format_agent_message(text) if text else None
 
         # skip item.started for commands — we show everything on item.completed
         if etype == "item.started" and itype == "command_execution":
@@ -123,7 +123,7 @@ class CodexRunner(BaseCliRunner):
 
             exit_code = item.get("exit_code")
             is_printf = cmd.lstrip().startswith("printf ")
-            is_boring = cls._is_boring_cmd(cmd)
+            is_boring = self._is_boring_cmd(cmd)
 
             if exit_code is not None and exit_code != 0:
                 payload: dict[str, object] = {"action": cmd[:80] + ("…" if len(cmd) > 80 else "")}
@@ -156,6 +156,13 @@ class CodexRunner(BaseCliRunner):
             return json.dumps(payload, ensure_ascii=False)
 
         if etype == "turn.completed":
+            usage = event.get("usage", {})
+            if isinstance(usage, dict):
+                self._tokens += (
+                    usage.get("input_tokens", 0)
+                    + usage.get("output_tokens", 0)
+                    + usage.get("cached_input_tokens", 0)
+                )
             return None
 
         return None  # skip other events
@@ -229,6 +236,7 @@ class CodexRunner(BaseCliRunner):
         # Wrap output_callback to parse JSONL before displaying
         self._jsonl_buf = ""
         self._last_agent_message = ""
+        self._tokens = 0
         self._real_output_callback = self.output_callback
         self.output_callback = self._on_raw_output
         # clear event log for this stage
@@ -285,6 +293,7 @@ class CodexRunner(BaseCliRunner):
             error_type=None,
             error_message=None,
             transcript=transcript,
+            tokens=self._tokens,
         )
 
     def _run_pty(self, envelope: TaskEnvelope):

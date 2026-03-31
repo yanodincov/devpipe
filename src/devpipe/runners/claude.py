@@ -23,6 +23,7 @@ class ClaudeRunner(BaseCliRunner):
         self._real_output_callback = None
         self._thinking_buffer = ""
         self._result_structured_output: dict[str, Any] | None = None
+        self._tokens: int = 0
 
     @staticmethod
     def _append_flag(command: list[str], flag: str, *values: str) -> list[str]:
@@ -60,8 +61,17 @@ class ClaudeRunner(BaseCliRunner):
         self._thinking_buffer = ""
 
     def _capture_structured_output(self, event: dict[str, Any]) -> None:
-        if event.get("type") == "result" and isinstance(event.get("structured_output"), dict):
-            self._result_structured_output = event["structured_output"]
+        if event.get("type") == "result":
+            if isinstance(event.get("structured_output"), dict):
+                self._result_structured_output = event["structured_output"]
+            usage = event.get("usage", {})
+            if isinstance(usage, dict):
+                self._tokens = (
+                    usage.get("input_tokens", 0)
+                    + usage.get("output_tokens", 0)
+                    + usage.get("cache_creation_input_tokens", 0)
+                    + usage.get("cache_read_input_tokens", 0)
+                )
             return
 
         if event.get("type") != "assistant":
@@ -157,6 +167,7 @@ class ClaudeRunner(BaseCliRunner):
         self._jsonl_buf = ""
         self._thinking_buffer = ""
         self._result_structured_output = None
+        self._tokens = 0
         self._real_output_callback = self.output_callback
         self.output_callback = self._on_raw_output
 
@@ -190,4 +201,5 @@ class ClaudeRunner(BaseCliRunner):
             error_type=None,
             error_message=None,
             transcript=transcript,
+            tokens=self._tokens,
         )

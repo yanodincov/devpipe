@@ -1,6 +1,7 @@
 """Shared formatting helpers for task snapshots in the TUI."""
 from __future__ import annotations
 
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -42,37 +43,65 @@ def format_snapshot_value(value: Any, key: str = "") -> str:
             # tag_roles: {tag: [roles]}
             return ", ".join(f"{k} ({', '.join(v)})" for k, v in value.items())
         return ", ".join(f"{k}={v}" for k, v in value.items())
-    str_value = str(value)
-    if key == "task":
-        lines = str_value.splitlines()
-        if len(lines) > 3:
-            return "\n".join(lines[:3]) + "\n..."
-        return str_value
-    return str_value
+    return str(value)
 
 
 def build_task_snapshot_lines(
     values: dict[str, Any],
     custom_fields: list[tuple[str, str]],
     highlight_key: str | None = None,
+    panel_width: int = 80,
 ) -> list[str]:
     lines: list[str] = []
 
+    # Compute label column width
+    all_labels = [label for _, label in STANDARD_FIELDS] + [label for _, label in custom_fields]
+    col_w = max((len(l) for l in all_labels), default=10) + 2
+
+    lines.append("[bold #7aa2f7]◆ GENERAL[/bold #7aa2f7]")
+    lines.append("")
+
+    indent = " " * (2 + col_w)
+    value_wrap_width = max(30, panel_width - (2 + col_w))
+
+    def _wrap_value(val: str) -> str:
+        """Wrap long value with hanging indent aligned to value column."""
+        wrapped = textwrap.wrap(val, width=value_wrap_width) or [val]
+        return ("\n" + indent).join(wrapped)
+
     for key, label in STANDARD_FIELDS:
-        display_val = format_snapshot_value(values.get(key, ""), key=key)
-        if key == highlight_key:
-            lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
+        raw_val = values.get(key, "")
+        if key == "profile":
+            display_val = f"[#7aa2f7]{raw_val}[/#7aa2f7]" if raw_val else "[dim](empty)[/dim]"
+            pad = label.ljust(col_w)
+            if key == highlight_key:
+                lines.append(f"[bold #7aa2f7]▶ {pad}[/bold #7aa2f7]{display_val}")
+            else:
+                lines.append(f"  [dim]{pad}[/dim]{display_val}")
+            continue
+        if key == "task":
+            task_str = str(raw_val) if raw_val not in (None, "") else ""
+            if len(task_str) > 300:
+                task_str = task_str[:300].rstrip() + "…"
+            display_val = _wrap_value(task_str) if task_str else "[dim](empty)[/dim]"
         else:
-            lines.append(f"   {label}: {display_val}")
+            display_val = format_snapshot_value(raw_val, key=key)
+        pad = label.ljust(col_w)
+        if key == highlight_key:
+            lines.append(f"[bold #7aa2f7]▶ {pad}[/bold #7aa2f7]{display_val}")
+        else:
+            lines.append(f"  [dim]{pad}[/dim]{display_val}")
 
     if custom_fields:
-        lines.append("\n[dim]── Custom ──[/dim]")
+        lines.append("")
+        lines.append("[bold #9ece6a]◆ CUSTOM[/bold #9ece6a]")
         for key, label in custom_fields:
             display_val = format_snapshot_value(values.get(key, ""), key=key)
+            pad = label.ljust(col_w)
             if key == highlight_key:
-                lines.append(f" [bold]▸ {label}:[/bold] {display_val}")
+                lines.append(f"[bold #7aa2f7]▶ {pad}[/bold #7aa2f7]{display_val}")
             else:
-                lines.append(f"   {label}: {display_val}")
+                lines.append(f"  [dim]{pad}[/dim]{display_val}")
 
     return lines
 
