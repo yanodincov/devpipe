@@ -489,7 +489,7 @@ class OrchestratorApp:
                 cancel()
 
 
-def build_default_app(base_dir: str | Path) -> OrchestratorApp:
+def build_default_app(base_dir: str | Path, show_prompt: bool = False) -> OrchestratorApp:
     base = Path(base_dir)
     config_store = ConfigStore(base / "config" / "runners.yaml")
     raw_config = config_store.load()
@@ -502,10 +502,12 @@ def build_default_app(base_dir: str | Path) -> OrchestratorApp:
         "codex": CodexRunner(
             command=codex_config.get("command", ["codex"]),
             timeout=int(codex_config.get("timeout", 300)),
+            show_prompt=show_prompt,
         ),
         "claude": ClaudeRunner(
             command=claude_config.get("command", ["claude"]),
             timeout=int(claude_config.get("timeout", 300)),
+            show_prompt=show_prompt,
         ),
     }
 

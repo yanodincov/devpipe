@@ -18,4 +18,4 @@ run = ".venv/bin/pytest --run-live-runners"
 
 [tasks.run]
 description = "Launch devpipe TUI"
-run = ".venv/bin/python -m devpipe"
+run = ".venv/bin/python -m devpipe $@"

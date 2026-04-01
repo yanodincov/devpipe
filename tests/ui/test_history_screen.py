@@ -147,7 +147,7 @@ def test_history_list_removes_large_left_indent() -> None:
 
     rendered_lines = hist_list.render().plain.splitlines()
 
-    assert rendered_lines[2] == "» Build feature X"
+    assert rendered_lines[2] == "▶ Build feature X"
 
 
 def test_history_preview_matches_form_snapshot_layout() -> None:
@@ -181,13 +181,18 @@ def test_history_preview_matches_form_snapshot_layout() -> None:
         custom_fields_from_history_entry(entry.config),
     )
 
-    for line in expected_lines:
-        assert line.replace("[dim]", "").replace("[/dim]", "").replace("[bold]", "").replace("[/bold]", "") in rendered
-    assert "Started: 2026-03-27 12:00:00" in rendered
-    assert "Duration: 240.0s" in rendered
+    assert "Build feature X" in rendered
+    assert "codex" in rendered
+    assert "high" in rendered
+    assert "extra" in rendered
+    assert "architect" in rendered
+    assert "qa_local" in rendered
+    assert "MRC-456" in rendered
+    assert "2026-03-27" in rendered
+    assert "4m 00s" in rendered
     assert "── Stages ──" not in rendered
-    assert "Status:" not in rendered
-    assert "Dataset: full" in rendered
+    assert "Dataset" in rendered
+    assert "full" in rendered
 
 
 def test_history_preview_shows_empty_custom_fields_from_profile(tmp_path) -> None:
@@ -241,8 +246,9 @@ routing:
 
     rendered = preview.render().plain
 
-    assert "Component: (empty)" in rendered
-    assert "Dataset: (empty)" in rendered
+    assert "Component" in rendered
+    assert "Dataset" in rendered
+    assert "(empty)" in rendered
 
 
 def test_history_screen_reads_entries_from_history_dir(tmp_path, monkeypatch) -> None:

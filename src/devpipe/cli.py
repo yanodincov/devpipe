@@ -26,8 +26,9 @@ def main() -> int:
         return validate_command(args[1:])
     
     # Default: launch TUI
+    show_prompt = "--show-prompt" in args
     project_root = find_project_root() or Path.cwd()
-    app = DevpipeTextualApp(project_root=project_root)
+    app = DevpipeTextualApp(project_root=project_root, show_prompt=show_prompt)
     app.run()
     return 0
 

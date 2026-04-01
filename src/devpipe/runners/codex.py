@@ -87,19 +87,11 @@ class CodexRunner(BaseCliRunner):
         except (json.JSONDecodeError, ValueError):
             return json.dumps({"thinking": text}, ensure_ascii=False)
 
-        payload: dict[str, object] = {}
         summary = data.get("summary")
         if summary:
-            payload["thinking"] = summary
-        for key, value in data.items():
-            if key == "summary":
-                continue
-            if value in ("", [], {}, None):
-                continue
-            payload[key] = value
-        if not payload:
-            payload["thinking"] = text
-        return json.dumps(payload, ensure_ascii=False)
+            return json.dumps({"thinking": summary}, ensure_ascii=False)
+        # No summary — show raw text as thinking
+        return json.dumps({"thinking": text}, ensure_ascii=False)
 
     def _format_event(self, event: dict) -> str | None:
         etype = event.get("type", "")
@@ -148,11 +140,7 @@ class CodexRunner(BaseCliRunner):
                 return None
 
             out_lines = output.splitlines()
-            shown = out_lines[:4]
-            rest = len(out_lines) - 4
-            payload["result"] = shown if len(shown) > 1 else shown[0]
-            if rest > 0:
-                payload["more_lines"] = rest
+            payload["result"] = out_lines if len(out_lines) > 1 else out_lines[0]
             return json.dumps(payload, ensure_ascii=False)
 
         if etype == "turn.completed":
@@ -185,6 +173,10 @@ class CodexRunner(BaseCliRunner):
                 continue
             try:
                 event = json.loads(line)
+                if isinstance(event, dict) and "prompt" in event:
+                    if self._real_output_callback:
+                        self._real_output_callback(json.dumps(event, ensure_ascii=False) + "\n")
+                    continue
                 # log all events for debugging (useful when --output-schema changes event types)
                 with open("/tmp/devpipe_events.jsonl", "a", errors="replace") as _ef:
                     _ef.write(line + "\n")
@@ -239,6 +231,7 @@ class CodexRunner(BaseCliRunner):
         self._tokens = 0
         self._real_output_callback = self.output_callback
         self.output_callback = self._on_raw_output
+        self._emit_prompt(self.build_prompt(envelope))
         # clear event log for this stage
         try:
             os.remove("/tmp/devpipe_events.jsonl")

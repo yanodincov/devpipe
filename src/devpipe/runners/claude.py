@@ -147,11 +147,7 @@ class ClaudeRunner(BaseCliRunner):
             if not content or not content.strip():
                 continue
             lines = content.strip().splitlines()
-            shown = lines[:4]
-            rest = len(lines) - 4
-            payload: dict[str, Any] = {"result": shown if len(shown) > 1 else shown[0]}
-            if rest > 0:
-                payload["more_lines"] = rest
+            payload: dict[str, Any] = {"result": lines if len(lines) > 1 else lines[0]}
             self._emit(payload)
 
     def _on_raw_output(self, text: str) -> None:
@@ -171,6 +167,11 @@ class ClaudeRunner(BaseCliRunner):
             except json.JSONDecodeError:
                 if self._real_output_callback:
                     self._real_output_callback(line + "\n")
+                continue
+
+            if isinstance(event, dict) and "prompt" in event:
+                if self._real_output_callback:
+                    self._real_output_callback(json.dumps(event, ensure_ascii=False) + "\n")
                 continue
 
             self._capture_structured_output(event)
@@ -209,6 +210,7 @@ class ClaudeRunner(BaseCliRunner):
         self._current_tool_input = ""
         self._real_output_callback = self.output_callback
         self.output_callback = self._on_raw_output
+        self._emit_prompt(self.build_prompt(envelope))
 
         try:
             completed = self._run_pty(envelope)

@@ -150,6 +150,7 @@ class UIState:
     nav_items: list[NavItem] = field(default_factory=list)
     selected_nav_index: int = 0
     active_screen: str = "config"  # config, history, run
+    show_prompt: bool = False
 
     @property
     def selected_nav_item(self) -> NavItem | None:

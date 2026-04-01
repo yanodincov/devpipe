@@ -45,6 +45,14 @@ def test_codex_runner_returns_structured_output() -> None:
     assert result.structured_output["summary"] == "done"
 
 
+def test_codex_runner_prompt_uses_agent_label() -> None:
+    runner = CodexRunner()
+
+    command, _ = runner._get_command_and_input(_envelope())
+
+    assert any(arg.startswith("Agent: architect") for arg in command)
+
+
 def test_codex_runner_raises_timeout() -> None:
     runner = CodexRunner()
     runner._run_pty = lambda _envelope: (_ for _ in ()).throw(RunnerTimeoutError("timed out"))  # type: ignore[method-assign]
@@ -80,7 +88,8 @@ def test_codex_runner_hides_boring_successful_command_output() -> None:
         },
     }
 
-    formatted = CodexRunner._format_event(event)
+    runner = CodexRunner()
+    formatted = runner._format_event(event)
 
     assert formatted is None
 
@@ -99,12 +108,14 @@ def test_codex_runner_formats_agent_message_as_structured_thinking_payload() -> 
         },
     }
 
-    formatted = CodexRunner._format_event(event)
+    runner = CodexRunner()
+    formatted = runner._format_event(event)
 
     assert formatted is not None
     payload = json.loads(formatted)
     assert payload["thinking"] == "I should inspect the repository instructions first."
-    assert payload["open_questions"] == ["Need exact schema shape"]
+    # open_questions is not forwarded; only the summary is shown as thinking
+    assert "open_questions" not in payload
 
 
 def test_codex_runner_formats_command_execution_as_action_payload() -> None:
@@ -118,12 +129,33 @@ def test_codex_runner_formats_command_execution_as_action_payload() -> None:
         },
     }
 
-    formatted = CodexRunner._format_event(event)
+    runner = CodexRunner()
+    formatted = runner._format_event(event)
 
     assert formatted is not None
     payload = json.loads(formatted)
     assert payload["action"] == "pwd"
     assert payload["result"] == "/Users/test/project"
+
+
+def test_codex_runner_keeps_full_command_output_for_ui_collapsing() -> None:
+    runner = CodexRunner()
+    event = {
+        "type": "item.completed",
+        "item": {
+            "type": "command_execution",
+            "command": "printf 'a\\nb\\nc\\nd\\ne'",
+            "exit_code": 0,
+            "aggregated_output": "a\nb\nc\nd\ne\n",
+        },
+    }
+
+    formatted = runner._format_event(event)
+
+    payload = json.loads(formatted)
+    # printf output is shown as "output" (not "result") since it's a display command
+    assert payload["output"] == "a\nb\nc\nd\ne"
+    assert "more_lines" not in payload
 
 
 def test_codex_runner_run_pty_registers_process_callback(monkeypatch) -> None:
@@ -139,3 +171,15 @@ def test_codex_runner_run_pty_registers_process_callback(monkeypatch) -> None:
     runner._run_pty(_envelope())
 
     assert seen["process_callback"] == runner._set_active_process
+
+
+def test_codex_runner_forwards_multiline_prompt_payload_unchanged() -> None:
+    seen: list[str] = []
+    runner = CodexRunner(output_callback=seen.append, show_prompt=True)
+    runner._real_output_callback = seen.append
+
+    runner._on_raw_output(json.dumps({"prompt": "line1\nline2\nline3"}, ensure_ascii=False) + "\n")
+
+    assert len(seen) == 1
+    payload = json.loads(seen[0])
+    assert payload["prompt"] == "line1\nline2\nline3"

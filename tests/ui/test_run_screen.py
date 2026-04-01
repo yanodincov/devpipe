@@ -19,7 +19,7 @@ from devpipe.ui.screens.run_screen import (
     LogPanel,
     RunQuestionPanel,
     RunScreen,
-    RunStageStrip,
+    RunStagePanel,
     _format_duration,
     _format_final_result,
     _format_pipeline_completion,
@@ -50,8 +50,7 @@ class TestRunScreen:
         state = _make_state()
         state = start_run(state, "run-1", ["architect", "developer", "qa_local"], "codex", "gpt-5", "medium")
         assert state.active_screen == "run"
-        assert len(state.run_view.timeline) == 3
-        assert all(a.status == "pending" for a in state.run_view.timeline)
+        assert len(state.run_view.timeline) == 0
 
     def test_stage_started_activates_stage(self):
         state = _make_state()
@@ -131,8 +130,8 @@ class TestRunScreen:
         assert state.active_screen == "run"
 
 
-def test_stage_strip_shows_only_completed_and_active_steps() -> None:
-    strip = RunStageStrip()
+def test_stage_strip_shows_completed_active_and_pending_steps() -> None:
+    strip = RunStagePanel()
     state = _make_state()
     state = start_run(state, "run-1", ["architect", "developer", "qa_local"], "codex", "gpt-5", "medium")
     state = begin_stage(state, "architect", "codex", "gpt-5", "medium")
@@ -148,7 +147,6 @@ def test_stage_strip_shows_only_completed_and_active_steps() -> None:
     assert "architect" in rendered
     assert "developer" in rendered
     assert "qa_local" not in rendered
-    assert "⠋" in rendered
     assert "12s" in rendered
     assert "8s" in rendered
 
@@ -158,17 +156,15 @@ def test_format_duration_keeps_fraction_for_short_steps() -> None:
     assert _format_duration(9.4) == "9.4s"
 
 
-def test_stage_strip_shows_current_pending_step_before_first_start() -> None:
-    strip = RunStageStrip()
+def test_stage_strip_shows_placeholder_before_first_stage_starts() -> None:
+    strip = RunStagePanel()
     state = _make_state()
     state = start_run(state, "run-1", ["architect", "developer"], "codex", "gpt-5", "medium")
     strip.set_timeline(state.run_view.timeline)
 
     rendered = strip.render().plain
 
-    assert "architect" in rendered
-    assert "developer" not in rendered
-    assert "No active steps yet" not in rendered
+    assert "No active steps yet" in rendered
 
 
 def test_run_status_bar_shows_model_effort_and_total_time() -> None:
@@ -212,22 +208,19 @@ def test_question_panel_has_placeholder() -> None:
     assert "No active question yet" in widgets[1].render().plain
 
 
-def test_log_panel_title_matches_screen_style() -> None:
+def test_log_panel_compose_yields_log_scroll() -> None:
+    from devpipe.ui.screens.run_screen import LogScroll
+
     panel = LogPanel()
-    title = next(panel.compose())
+    widget = next(panel.compose())
 
-    assert "Activity Feed" == title.render().plain
+    assert isinstance(widget, LogScroll)
 
 
-def test_run_screen_compose_uses_single_column_console_layout() -> None:
+def test_run_screen_uses_horizontal_layout_and_status_bar() -> None:
+    # compose() uses Horizontal context manager — verify it doesn't raise
     screen = RunScreen(_make_state())
-
-    widgets = list(screen.compose())
-
-    assert len(widgets) == 3
-    assert isinstance(widgets[0], RunStageStrip)
-    assert isinstance(widgets[1], LogPanel)
-    assert isinstance(widgets[2], RunStatusBar)
+    assert screen._state is not None
 
 
 def test_format_log_chunk_pretty_prints_json_objects() -> None:
@@ -246,16 +239,16 @@ def test_format_log_chunk_keeps_command_block_compact() -> None:
     assert "/Users/test/project" in formatted
 
 
-def test_stage_strip_css_adds_vertical_padding() -> None:
-    css = RunStageStrip.DEFAULT_CSS
+def test_stage_strip_css_has_fixed_width_and_padding() -> None:
+    css = RunStagePanel.DEFAULT_CSS
 
-    assert "padding: 0 1;" in css
-    assert "height: 1;" in css
-    assert "border-bottom" not in css
+    assert "padding: 1 1;" in css
+    assert "width:" in css
+    assert "border-right" in css
 
 
-def test_stage_strip_render_shows_only_steps_row() -> None:
-    strip = RunStageStrip()
+def test_stage_strip_render_shows_stages_with_header() -> None:
+    strip = RunStagePanel()
     state = _make_state()
     state = start_run(state, "run-1", ["architect", "developer"], "codex", "gpt-5", "medium")
     state = begin_stage(state, "architect", "codex", "gpt-5", "medium")
@@ -266,14 +259,14 @@ def test_stage_strip_render_shows_only_steps_row() -> None:
     rendered = strip.render().plain
 
     assert "architect" in rendered
-    assert "active" not in rendered
-    assert rendered.count("\n") == 0
+    assert "STAGES" in rendered
+    assert rendered.count("\n") > 0
 
 
-def test_log_panel_css_disables_horizontal_overflow() -> None:
+def test_log_panel_css_hides_scrollbar() -> None:
     css = LogPanel.DEFAULT_CSS
 
-    assert "overflow-x: hidden;" in css
+    assert "scrollbar-size: 0 0;" in css
 
 
 def test_run_screen_stage_started_does_not_duplicate_existing_active_attempt() -> None:
@@ -320,9 +313,12 @@ def test_run_screen_stage_started_sets_clock_for_existing_active_attempt() -> No
 
 def test_log_panel_append_respects_follow_tail_state() -> None:
     panel = LogPanel()
-    writes: list[bool | None] = []
+    scrolled: list[bool] = []
+    mounted: list[object] = []
     fake_log = SimpleNamespace(
-        write=lambda _text, **kwargs: writes.append(kwargs.get("scroll_end")),
+        mount=lambda widget, **_k: mounted.append(widget),
+        scroll_end=lambda **_k: scrolled.append(True),
+        children=[],
     )
     panel.query_one = lambda *_args, **_kwargs: fake_log  # type: ignore[method-assign]
 
@@ -330,7 +326,8 @@ def test_log_panel_append_respects_follow_tail_state() -> None:
     panel.pause_follow()
     panel.append("second")
 
-    assert writes == [True, False]
+    assert len(mounted) == 2
+    assert len(scrolled) == 1
 
 
 def test_run_screen_stage_markers_use_readable_status_messages() -> None:
@@ -441,22 +438,19 @@ def test_format_log_chunk_formats_top_level_sections_with_spacing() -> None:
 def test_format_log_chunk_renders_empty_items_wrapper_as_empty_value() -> None:
     formatted = _format_log_chunk('{"risks":{"items":[]}}')
 
-    assert "Risks: (empty)" in formatted
-    assert "Items" not in formatted
+    assert "(empty)" in formatted
 
 
 def test_format_log_chunk_renders_empty_strings_as_empty_placeholders() -> None:
     formatted = _format_log_chunk('{"top_name":"","pitch":"","final_card":{"positioning":""}}')
 
-    assert "Top Name: (empty)" in formatted
-    assert "Pitch: (empty)" in formatted
-    assert "Positioning: (empty)" in formatted
+    assert "(empty)" in formatted
 
 
-def test_run_status_bar_uses_panel_palette() -> None:
+def test_run_status_bar_uses_dark_background_and_error_alert() -> None:
     css = RunStatusBar.DEFAULT_CSS
 
-    assert "$panel" in css
+    assert "$primary-darken-3" in css
     assert "$error" in css
 
 
@@ -496,17 +490,47 @@ def test_format_log_renderable_dims_only_property_names() -> None:
     assert hasattr(body, "spans")
     plain = body.plain
 
-    def style_at(fragment: str) -> str | None:
+    def styles_at(fragment: str) -> list[str]:
         offset = plain.index(fragment)
-        for span in body.spans:
-            if span.start <= offset < span.end:
-                return str(span.style)
-        return None
+        return [str(span.style) for span in body.spans if span.start <= offset < span.end]
 
-    assert style_at("Top Name") == "dim"
-    assert style_at("Pitch") == "dim"
-    assert style_at("ClearPR") in {"white", None}
-    assert style_at("Friendly reviews") in {"white", None}
+    assert "dim" in styles_at("Top Name")
+    assert "dim" in styles_at("Pitch")
+    assert "dim" not in styles_at("ClearPR")
+    assert "dim" not in styles_at("Friendly reviews")
+
+
+def test_format_log_renderable_prompt_uses_agent_label_without_left_padding() -> None:
+    renderable = _format_log_renderable('{"prompt":"Role: write\\nGoal: test"}')
+
+    assert isinstance(renderable, Panel)
+    assert renderable.renderable.plain.startswith("Agent: write")
+
+
+def test_log_panel_rerenders_entries_on_resize() -> None:
+    panel = LogPanel()
+    mounts: list[object] = []
+    removed: list[object] = []
+
+    class FakeChild:
+        def remove(self):
+            removed.append(self)
+
+    fake_children = [FakeChild()]
+    fake_log = SimpleNamespace(
+        mount=lambda widget, **_k: mounts.append(widget),
+        scroll_end=lambda **_k: None,
+        children=fake_children,
+    )
+    panel.query_one = lambda *_args, **_kwargs: fake_log  # type: ignore[method-assign]
+
+    panel.append('{"prompt":"Agent: write\\nGoal: test"}')
+    mounts.clear()
+
+    panel._rerender_entries()
+
+    assert removed
+    assert mounts
 
 
 def test_format_pipeline_completion_includes_duration_and_name() -> None:

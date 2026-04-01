@@ -27,7 +27,7 @@ def test_claude_runner_uses_command_template() -> None:
 
     assert command[:12] == [
         "claude",
-        "--print",
+        "-p",
         "--verbose",
         "--output-format",
         "stream-json",
@@ -40,7 +40,7 @@ def test_claude_runner_uses_command_template() -> None:
         "--json-schema",
     ]
     assert command[12] == '{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"]}'
-    assert command[13].startswith("Role: qa_local")
+    assert command[13].startswith("Agent: qa_local")
     assert prompt == ""
 
 
@@ -100,7 +100,8 @@ def test_claude_runner_formats_thinking_and_actions_from_stream_json() -> None:
     )
 
     assert any('"thinking": "First part. Second part."' in item for item in seen)
-    assert any('"action": "StructuredOutput"' in item for item in seen)
+    # StructuredOutput tool_use blocks are not emitted as actions (they carry the final output)
+    assert not any('"action": "StructuredOutput"' in item for item in seen)
 
 
 def test_claude_runner_uses_result_structured_output_from_stream_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -163,3 +164,39 @@ def test_claude_runner_uses_result_structured_output_from_stream_json(monkeypatc
 
     assert result.summary == "ready"
     assert result.structured_output == {"summary": "ready"}
+
+
+def test_claude_runner_forwards_multiline_prompt_payload_unchanged() -> None:
+    seen: list[str] = []
+    runner = ClaudeRunner(output_callback=seen.append, show_prompt=True)
+    runner._real_output_callback = seen.append
+
+    runner._on_raw_output(json.dumps({"prompt": "line1\nline2\nline3"}, ensure_ascii=False) + "\n")
+
+    assert len(seen) == 1
+    payload = json.loads(seen[0])
+    assert payload["prompt"] == "line1\nline2\nline3"
+
+
+def test_claude_runner_keeps_full_tool_result_for_ui_collapsing() -> None:
+    seen: list[str] = []
+    runner = ClaudeRunner(command=["claude"])
+    runner._real_output_callback = seen.append
+
+    runner._handle_user_event(
+        {
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "content": "a\nb\nc\nd\ne",
+                    }
+                ]
+            }
+        }
+    )
+
+    assert len(seen) == 1
+    payload = json.loads(seen[0])
+    assert payload["result"] == ["a", "b", "c", "d", "e"]
+    assert "more_lines" not in payload

@@ -197,6 +197,7 @@ class BaseCliRunner:
     stdin_callback: "Callable[[bytes], None] | None" = None
     model_name: str | None = None
     effort: str | None = None
+    show_prompt: bool = False
     _active_process: subprocess.Popen | None = field(default=None, init=False, repr=False)
     _active_master_fd: int | None = field(default=None, init=False, repr=False)
     _process_lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
@@ -218,9 +219,15 @@ class BaseCliRunner:
             except OSError:
                 pass
 
+    def _emit_prompt(self, prompt: str) -> None:
+        """Emit the prompt to output_callback if show_prompt is enabled."""
+        if self.show_prompt and self.output_callback:
+            import json as _json
+            self.output_callback(_json.dumps({"prompt": prompt}, ensure_ascii=False) + "\n")
+
     def build_prompt(self, envelope: TaskEnvelope) -> str:
         return (
-            f"Role: {envelope.role}\n"
+            f"Agent: {envelope.role}\n"
             f"Goal: {envelope.goal}\n"
             f"Model: {envelope.model_name}\n"
             f"Effort: {envelope.effort}\n"

@@ -4,6 +4,7 @@ Uses render() for Textual 8.x compatibility.
 """
 from __future__ import annotations
 
+from rich.cells import cell_len
 from rich.text import Text
 
 from textual.widget import Widget
@@ -23,13 +24,14 @@ class StatusBar(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, show_prompt: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self._left = ""
         self._center = ""
         self._right = ""
         self._is_ready = False
         self._is_error = False
+        self._show_prompt = show_prompt
 
     def render(self) -> Text:
         text = Text()
@@ -44,6 +46,11 @@ class StatusBar(Widget):
             else:
                 style = "bold #9ece6a" if self._is_ready else "bold #e0af68"
                 text.append(self._right, style=style)
+        if self._show_prompt:
+            available_width = self.size.width
+            padding = available_width - cell_len(text.plain) - 1
+            text.append(" " * max(1, padding), style="dim")
+            text.append("⬥", style="bold #e0af68")
         return text
 
     def update_state(self, state: StatusBarState) -> None:
@@ -72,7 +79,7 @@ class RunStatusBar(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, show_prompt: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self._status = ""
         self._runner = ""
@@ -81,6 +88,7 @@ class RunStatusBar(Widget):
         self._elapsed = ""
         self._alert_message = ""
         self._alert_active = False
+        self._show_prompt = show_prompt
 
     def render(self) -> Text:
         if self._alert_active:
@@ -114,6 +122,11 @@ class RunStatusBar(Widget):
                 text.append(status, style="dim")
             if self._elapsed:
                 text.append(f"  {self._elapsed}", style="dim")
+        if self._show_prompt:
+            available_width = self.size.width
+            padding = available_width - cell_len(text.plain) - 1
+            text.append(" " * max(1, padding), style="dim")
+            text.append("⬥", style="bold #e0af68")
         return text
 
     def update_run_state(

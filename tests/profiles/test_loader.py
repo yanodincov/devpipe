@@ -257,3 +257,84 @@ routing:
 
         assert "You are the intake stage" in envelope.instructions
         assert envelope.output_schema == stage.agent.schema_content
+
+    def test_build_stage_envelope_replaces_placeholders_from_stage_in_bindings(self):
+        """Stage in-bindings must replace matching {{placeholders}} in prompt text."""
+        project_root = Path(__file__).resolve().parents[2]
+        profile = load_profile("file-demo", project_root=project_root)
+        stage = profile.stages["read"]
+        state = PipelineState.create(
+            task_id="demo-1",
+            task_text="Demo task",
+            selected_runner="codex",
+            run_id="run-1",
+        )
+        state.release_context["topic"] = "space exploration"
+        state.artifacts["stage_outputs"]["write"] = {
+            "file_path": "/tmp/demo.txt",
+            "lines_written": 5,
+            "summary": "done",
+        }
+
+        envelope = build_stage_envelope(
+            stage,
+            state,
+            model_name="gpt-test",
+            effort="medium",
+            extra_context={
+                "config": {
+                    "task": "Demo task",
+                    "extra_params": {"topic": "space exploration"},
+                }
+            },
+            project_root=project_root,
+        )
+
+        assert "{{topic}}" not in envelope.instructions
+        assert "{{file_path}}" not in envelope.instructions
+        assert "{{lines_written}}" not in envelope.instructions
+        assert "space exploration" in envelope.instructions
+        assert "/tmp/demo.txt" in envelope.instructions
+        assert "5 lines" in envelope.instructions
+
+    def test_build_stage_envelope_replaces_idea_lab_input_placeholders(self):
+        """Bundled idea-lab prompts should interpolate all declared stage inputs."""
+        project_root = Path(__file__).resolve().parents[2]
+        profile = load_profile("idea-lab", project_root=project_root)
+        stage = profile.stages["intake"]
+        state = PipelineState.create(
+            task_id="demo-2",
+            task_text="Launch a tiny tool for remote writers",
+            selected_runner="codex",
+            run_id="run-2",
+        )
+        state.shared_context["shared"] = {
+            "created_at": "2026-04-01T00:00:00Z",
+            "seed": "demo",
+        }
+
+        envelope = build_stage_envelope(
+            stage,
+            state,
+            model_name="gpt-test",
+            effort="medium",
+            extra_context={
+                "config": {
+                    "task": "Launch a tiny tool for remote writers",
+                    "tone": "playful",
+                    "depth": 3,
+                    "include_twist": True,
+                }
+            },
+            project_root=project_root,
+        )
+
+        assert "{{task}}" not in envelope.instructions
+        assert "{{tone}}" not in envelope.instructions
+        assert "{{depth}}" not in envelope.instructions
+        assert "{{include_twist}}" not in envelope.instructions
+        assert "{{shared_context}}" not in envelope.instructions
+        assert "Launch a tiny tool for remote writers" in envelope.instructions
+        assert "playful" in envelope.instructions
+        assert "3" in envelope.instructions
+        assert "true" in envelope.instructions

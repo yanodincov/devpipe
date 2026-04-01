@@ -4,6 +4,21 @@ Goal:
 - Evaluate whether the idea is already strong enough to finalize.
 - Be direct, but keep the result lightweight.
 
+Inputs:
+- Task: {{task}}
+- Depth: {{depth}}
+- Concept map:
+{{concept_map}}
+- Candidate names:
+{{candidate_names}}
+- Audience notes:
+{{audience_notes}}
+- Needs pressure test: {{needs_pressure_test}}
+- Confidence: {{confidence}}
+- Novelty score: {{novelty_score}}
+- Shared context:
+{{shared_context}}
+
 Random restart gate:
 - Mentally pick a random integer from 1 to 10 (just choose freely, no need to explain).
 - If the number is even: set retry_to_start to true (the pipeline will restart from the beginning for a fresh perspective).

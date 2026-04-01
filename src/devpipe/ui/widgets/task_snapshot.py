@@ -59,7 +59,6 @@ def build_task_snapshot_lines(
     col_w = max((len(l) for l in all_labels), default=10) + 2
 
     lines.append("[bold #7aa2f7]◆ GENERAL[/bold #7aa2f7]")
-    lines.append("")
 
     indent = " " * (2 + col_w)
     value_wrap_width = max(30, panel_width - (2 + col_w))
@@ -115,7 +114,7 @@ def custom_fields_from_form(fields: list[FieldMeta]) -> list[tuple[str, str]]:
 
 
 def custom_fields_from_history_entry(entry: dict[str, Any]) -> list[tuple[str, str]]:
-    result = [(key, label) for key, label in TOP_LEVEL_CUSTOM_FIELDS if key in entry]
+    result = [(key, label) for key, label in TOP_LEVEL_CUSTOM_FIELDS if entry.get(key)]
     extra = entry.get("extra_params", {})
     if isinstance(extra, dict):
         for key in extra:

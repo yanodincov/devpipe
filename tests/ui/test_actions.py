@@ -231,9 +231,8 @@ class TestRunActions:
         assert new.active_screen == "run"
         assert new.run_view.status == "running"
         assert new.run_view.run_id == "run-123"
-        assert len(new.run_view.timeline) == 2
-        assert new.run_view.timeline[0].stage == "architect"
-        assert new.run_view.timeline[0].status == "pending"
+        # Timeline starts empty — stages are added as they are activated
+        assert new.run_view.timeline == []
 
     def test_begin_stage(self):
         state = _loaded_state()

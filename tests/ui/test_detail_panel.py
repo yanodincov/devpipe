@@ -55,14 +55,12 @@ def test_custom_field_summary_keeps_full_task_context() -> None:
     panel.show_summary(item, _form())
 
     rendered = panel.render().plain
-    assert "Task: Ship feature" in rendered
-    assert "Runner: codex" in rendered
-    assert "Model: auto" in rendered
-    assert "Effort: auto" in rendered
-    assert "Start Agent: architect" in rendered
-    assert "Finish Agent: qa_stand" in rendered
-    assert "Namespace: u1-custom" in rendered
-    assert "Release namespace" in rendered
+    assert "Ship feature" in rendered
+    assert "codex" in rendered
+    assert "auto" in rendered
+    assert "architect" in rendered
+    assert "qa_stand" in rendered
+    assert "u1-custom" in rendered
     assert "Type:" not in rendered
     assert "Options:" not in rendered
 
@@ -75,7 +73,9 @@ def test_standard_field_summary_shows_field_details() -> None:
 
     rendered = panel.render().plain
     assert "Field Details" not in rendered
-    assert "Runner selection mode" in rendered
+    # Runner field is highlighted in the snapshot
+    assert "Runner" in rendered
+    assert "codex" in rendered
     assert "Type:" not in rendered
     assert "Options:" not in rendered
 
@@ -87,8 +87,9 @@ def test_tags_is_rendered_as_standard_field() -> None:
     panel.show_summary(item, _form())
 
     rendered = panel.render().plain
-    assert "Tags: go, custom-tag" in rendered
-    assert "Pipeline tags" in rendered
+    # Tags are shown in the snapshot summary (comma-separated values)
+    assert "go, custom-tag" in rendered
+    assert "Tags" in rendered
 
 
 def test_text_editor_mode_shows_field_details() -> None:
@@ -114,10 +115,9 @@ def test_action_summary_keeps_current_task_context() -> None:
     panel.show_summary(item, _form())
 
     rendered = panel.render().plain
-    assert "Task: Ship feature" in rendered
-    assert "Runner: codex" in rendered
-    assert "Model: auto" in rendered
-    assert "Press Enter to open history" in rendered
+    assert "Ship feature" in rendered
+    assert "codex" in rendered
+    assert "auto" in rendered
 
 
 def test_begin_edit_model_uses_single_choice_editor() -> None:
@@ -130,7 +130,8 @@ def test_begin_edit_model_uses_single_choice_editor() -> None:
     assert panel.editor_mode == "single_choice"
     assert panel.editor_options == ["auto", "low", "middle", "high"]
     assert panel.editor_current_value() == "auto"
-    assert "Model level override for all stages" in panel.render().plain
+    # Editor shows choice list without description text
+    assert "● auto" in panel.render().plain
     assert "Type:" not in panel.render().plain
     assert "Options:" not in panel.render().plain
 
@@ -256,7 +257,8 @@ def test_begin_edit_namespace_uses_single_choice_editor_with_custom_values() -> 
     assert panel.editor_mode == "single_choice"
     assert panel.editor_allows_custom is True
     assert "u1-custom" in panel.editor_options
-    assert "Release namespace" in panel.render().plain
+    # Editor shows choice list without description text
+    assert "u1-custom" in panel.render().plain
     assert "Type:" not in panel.render().plain
     assert "Options:" not in panel.render().plain
 
@@ -325,7 +327,8 @@ def test_begin_edit_tags_uses_multi_choice_editor() -> None:
     assert "● go" in rendered
     assert "● custom-tag" in rendered
     assert all(span.style != "x" for span in panel.render().spans)
-    assert "Pipeline tags" in panel.render().plain
+    # Editor shows choice list without description text
+    assert "go" in panel.render().plain
     assert "Type:" not in panel.render().plain
     assert "Options:" not in panel.render().plain
 

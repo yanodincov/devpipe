@@ -72,10 +72,11 @@ class DevpipeTextualApp(App):
         Binding("ctrl+q", "quit", "Quit", show=True, priority=True),
     ]
 
-    def __init__(self, project_root: Path | None = None, **kwargs) -> None:
+    def __init__(self, project_root: Path | None = None, show_prompt: bool = False, **kwargs) -> None:
         super().__init__(**kwargs)
         self._project_root = project_root or Path.cwd()
-        self._ui_state = UIState()
+        self._show_prompt = show_prompt
+        self._ui_state = UIState(show_prompt=show_prompt)
         self._result_config: RunConfig | None = None
         self._runtime_app: OrchestratorApp | None = None
         self._run_session: RunSession | None = None
@@ -354,7 +355,7 @@ class DevpipeTextualApp(App):
     def _ensure_runtime_app(self) -> OrchestratorApp:
         if self._runtime_app is None:
             bundle_root = Path(__file__).resolve().parents[3]
-            self._runtime_app = build_default_app(bundle_root)
+            self._runtime_app = build_default_app(bundle_root, show_prompt=self._show_prompt)
         return self._runtime_app
 
     def _launch_run_session(self, config: RunConfig) -> None:

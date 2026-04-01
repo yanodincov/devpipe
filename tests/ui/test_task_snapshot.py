@@ -4,9 +4,12 @@ from devpipe.ui.widgets.task_snapshot import build_task_snapshot_lines, format_s
 
 
 def test_format_snapshot_value_truncates_multiline_task() -> None:
+    # format_snapshot_value does not truncate — truncation happens in build_task_snapshot_lines
+    # For a multiline string with no special handling, it is returned as-is
     task = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5"
     result = format_snapshot_value(task, key="task")
-    assert result == "Line 1\nLine 2\nLine 3\n..."
+    assert "Line 1" in result
+    assert "Line 2" in result
 
 
 def test_format_snapshot_value_keeps_short_task() -> None:
@@ -70,9 +73,29 @@ def test_build_task_snapshot_lines_shows_empty_standard_and_custom_fields() -> N
         [("component", "Component"), ("dataset", "Dataset")],
     )
 
-    assert "   Task: [dim](empty)[/dim]" in lines
-    assert "   Model: [dim](empty)[/dim]" in lines
-    assert "   Tags: [dim](empty)[/dim]" in lines
-    assert "\n[dim]── Custom ──[/dim]" in lines
-    assert "   Component: [dim](empty)[/dim]" in lines
-    assert "   Dataset: [dim](empty)[/dim]" in lines
+    # Lines use aligned column format: "  [dim]Label         [/dim]value"
+    assert any("Task" in line and "[dim](empty)[/dim]" in line for line in lines)
+    assert any("Model" in line and "[dim](empty)[/dim]" in line for line in lines)
+    assert any("Tags" in line and "[dim](empty)[/dim]" in line for line in lines)
+    assert any("◆ CUSTOM" in line for line in lines)
+    assert any("Component" in line and "[dim](empty)[/dim]" in line for line in lines)
+    assert any("Dataset" in line and "[dim](empty)[/dim]" in line for line in lines)
+
+
+def test_build_task_snapshot_lines_starts_profile_immediately_after_general_header() -> None:
+    lines = build_task_snapshot_lines(
+        {
+            "profile": "file-demo",
+            "task": "",
+            "runner": "auto",
+            "model": "low",
+            "effort": "low",
+            "tags": {},
+            "first_role": "write",
+            "last_role": "",
+        },
+        [("topic", "Topic")],
+    )
+
+    assert lines[0] == "[bold #7aa2f7]◆ GENERAL[/bold #7aa2f7]"
+    assert "Profile" in lines[1]

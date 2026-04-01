@@ -16,15 +16,18 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Horizontal
+from textual.containers import Horizontal, VerticalScroll
+from textual.events import Resize
 from textual.screen import Screen
 from textual.widget import Widget
-from textual.widgets import RichLog, Static
+from textual.widgets import Static
 
 from devpipe.ui.state import StageAttempt, UIState
 from devpipe.ui.widgets.status_bar import RunStatusBar
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_COLLAPSE_LIMIT = 300
+_MESSAGE_TEXT_STYLE = "#f0ede6"
 
 
 def _humanize_key(key: str) -> str:
@@ -41,7 +44,7 @@ def _is_empty_value(value: Any) -> bool:
     return value == [] or value == {} or value == ""
 
 
-def _append_styled_value(text: Text, value: Any, style: str = "white") -> None:
+def _append_styled_value(text: Text, value: Any, style: str = _MESSAGE_TEXT_STYLE) -> None:
     if value == "":
         text.append("(empty)", style=style)
         return
@@ -121,7 +124,7 @@ def _message_kind(value: Any) -> tuple[str, Any, dict[str, Any]]:
         if "status" in value and isinstance(value.get("status"), str):
             rest = {k: v for k, v in value.items() if k != "status"}
             return str(value.get("status") or "status"), None, rest
-        for key in ("thinking", "action", "output"):
+        for key in ("thinking", "action", "output", "prompt"):
             if key in value:
                 primary = value.get(key)
                 rest = {k: v for k, v in value.items() if k != key}
@@ -142,7 +145,7 @@ def _render_block_lines(value: Any) -> str:
 
 def _render_data_text(value: Any, indent: int = 0) -> Text:
     value = _unwrap_collection_wrapper(value)
-    text = Text()
+    text = Text(style=_MESSAGE_TEXT_STYLE)
     prefix = " " * indent
     if isinstance(value, dict):
         items = list(value.items())
@@ -189,8 +192,13 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
 
 def _render_block_text(value: Any) -> Text:
     kind, primary, rest = _message_kind(value)
-    text = Text()
-    if primary not in (None, "", [], {}):
+    text = Text(style=_MESSAGE_TEXT_STYLE)
+    if kind == "prompt" and isinstance(primary, str):
+        prompt_text = primary
+        if prompt_text.startswith("Role: "):
+            prompt_text = "Agent: " + prompt_text[len("Role: ") :]
+        text.append(prompt_text)
+    elif primary not in (None, "", [], {}):
         text.append(_render_data_text(primary, indent=2))
     if rest:
         if primary not in (None, "", [], {}):
@@ -209,31 +217,59 @@ def _render_message_panel(value: Any) -> Panel:
         title_align="left",
         border_style="#2a2e39",
         box=box.ROUNDED,
-        padding=(0, 1),
+        padding=0,
+        expand=True,
+    )
+
+
+def _render_collapsed_message_panel(value: Any, limit: int = _COLLAPSE_LIMIT) -> Panel:
+    kind, _, _ = _message_kind(value)
+    title = Text(kind, style="#6b7280")
+    plain = _render_block_text(value).plain
+    collapsed = plain[:limit].rstrip()
+    if len(plain) > limit:
+        collapsed += f" {len(plain) - len(collapsed)} symbols more ..."
+    return Panel(
+        Text(collapsed, style=_MESSAGE_TEXT_STYLE),
+        title=title,
+        title_align="left",
+        subtitle=Text("[click to expand]", style="dim"),
+        subtitle_align="center",
+        border_style="#2a2e39",
+        box=box.ROUNDED,
+        padding=0,
+        expand=True,
     )
 
 
 def _format_log_renderable(text: str) -> str | Panel:
+    parsed = _parse_log_value(text)
+    if isinstance(parsed, str):
+        return parsed
+    return _render_message_panel(parsed)
+
+
+def _parse_log_value(text: str) -> str | dict[str, Any]:
     stripped = text.strip()
     if not stripped:
         return ""
     if stripped.startswith("⟫ "):
-        return _render_message_panel({"action": stripped[2:].strip()})
+        return {"action": stripped[2:].strip()}
     if stripped.startswith("▶ Started:"):
-        return _render_message_panel({"status": "started", "stage": stripped.split(":", 1)[1].strip()})
+        return {"status": "started", "stage": stripped.split(":", 1)[1].strip()}
     if stripped.startswith("✓ Completed:"):
-        return _render_message_panel({"status": "completed", "stage": stripped.split(":", 1)[1].strip()})
+        return {"status": "completed", "stage": stripped.split(":", 1)[1].strip()}
     if stripped.startswith("✗ Failed:"):
         parts = stripped.split("\n", 1)
         payload: dict[str, Any] = {"status": "failed", "stage": parts[0].split(":", 1)[1].strip()}
         if len(parts) > 1 and parts[1].strip():
             payload["error"] = parts[1].strip()
-        return _render_message_panel(payload)
+        return payload
     try:
         parsed = json.loads(stripped)
     except json.JSONDecodeError:
-        return _render_message_panel({"note": stripped})
-    return _render_message_panel(parsed)
+        return {"note": stripped}
+    return parsed
 
 
 def _format_final_result(output: dict[str, Any]) -> str:
@@ -256,7 +292,8 @@ class RunStagePanel(Widget):
 
     DEFAULT_CSS = """
     RunStagePanel {
-        width: 28;
+        width: 20;
+        min-width: 16;
         background: #1e1e1e;
         border-right: solid $primary-darken-3;
         padding: 1 1;
@@ -380,19 +417,75 @@ class RunQuestionPanel(Widget):
             pass
 
 
-class RunLogOutput(RichLog, can_focus=False):
-    """RichLog that disables follow-tail while the operator scrolls away."""
+class LogEntry(Widget, can_focus=False):
+    """Single clickable log entry that can collapse and expand."""
+
+    DEFAULT_CSS = """
+    LogEntry {
+        width: 1fr;
+        height: auto;
+        margin-bottom: 1;
+    }
+    """
+
+    def __init__(
+        self,
+        text: str,
+        entry_id: int,
+        expanded: bool = False,
+        on_toggle: callable | None = None,
+        **kwargs,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._text = text
+        self._entry_id = entry_id
+        self._expanded = expanded
+        self._on_toggle = on_toggle
+        self._value = _parse_log_value(text)
+        self._plain = _render_block_text(self._value).plain
+
+    @property
+    def is_collapsible(self) -> bool:
+        return len(self._plain) > _COLLAPSE_LIMIT
+
+    def render(self) -> Panel:
+        if self.is_collapsible and not self._expanded:
+            return _render_collapsed_message_panel(self._value)
+        panel = _render_message_panel(self._value)
+        if self.is_collapsible:
+            return Panel(
+                Text(panel.renderable.plain, style=_MESSAGE_TEXT_STYLE),
+                title=panel.title,
+                title_align=panel.title_align,
+                subtitle=Text("[click to collapse]", style="dim"),
+                subtitle_align="center",
+                border_style=panel.border_style,
+                box=panel.box,
+                padding=panel.padding,
+                expand=True,
+            )
+        return panel
+
+    def on_click(self, event: events.Click) -> None:
+        if self.is_collapsible and self._on_toggle is not None:
+            self._on_toggle(self._entry_id)
+
+
+class LogScroll(VerticalScroll, can_focus=False):
+    """Scrollable container that updates follow-tail state while scrolling."""
 
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
-        self.parent.pause_follow()  # type: ignore[union-attr]
-        super()._on_mouse_scroll_up(event)
+        if self.parent is not None:
+            self.parent.pause_follow()  # type: ignore[union-attr]
+        super().on_mouse_scroll_up(event)
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        super()._on_mouse_scroll_down(event)
-        if self.is_vertical_scroll_end:
-            self.parent.resume_follow()  # type: ignore[union-attr]
-        else:
-            self.parent.pause_follow()  # type: ignore[union-attr]
+        super().on_mouse_scroll_down(event)
+        if self.parent is not None:
+            if self.is_vertical_scroll_end:
+                self.parent.resume_follow()  # type: ignore[union-attr]
+            else:
+                self.parent.pause_follow()  # type: ignore[union-attr]
 
 
 class LogPanel(Widget, can_focus=False):
@@ -403,19 +496,17 @@ class LogPanel(Widget, can_focus=False):
         width: 1fr;
         background: #1e1e1e;
         padding: 0;
-        overflow-x: hidden;
-        scrollbar-size: 0 0;
+        min-width: 0;
     }
-    LogPanel RichLog {
+    LogPanel LogScroll {
         width: 1fr;
         height: 1fr;
         padding: 0;
         background: #1e1e1e;
-        tint: transparent;
-        overflow-x: hidden;
+        min-width: 0;
         scrollbar-size: 0 0;
     }
-    LogPanel RichLog:focus {
+    LogPanel LogScroll:focus {
         background: #1e1e1e;
         border: none;
     }
@@ -424,44 +515,69 @@ class LogPanel(Widget, can_focus=False):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self._follow_tail: bool = True
-        self._has_entries: bool = False
+        self._entries: list[str] = []
+        self._expanded_entries: set[int] = set()
 
     def compose(self) -> ComposeResult:
-        yield RunLogOutput(highlight=True, markup=False, wrap=True, id="log-output")
-
-    def on_mount(self) -> None:
-        log = self.query_one("#log-output", RichLog)
-        log.styles.background = "#1e1e1e"
+        yield LogScroll(id="log-output")
 
     def append(self, text: str) -> None:
+        entry_id = len(self._entries)
+        self._entries.append(text)
         try:
-            log = self.query_one("#log-output", RichLog)
-            payload = _format_log_renderable(text)
-            if isinstance(payload, str):
-                if payload and not payload.endswith("\n"):
-                    payload += "\n"
-                if self._has_entries and payload:
-                    payload = "\n" + payload
-                log.write(payload, scroll_end=self._follow_tail, animate=False)
-            elif payload:
-                if self._has_entries:
-                    log.write(Text(""), scroll_end=False, animate=False)
-                log.write(payload, expand=True, scroll_end=self._follow_tail, animate=False)
-            if payload:
-                self._has_entries = True
+            container = self.query_one("#log-output", LogScroll)
+            container.mount(
+                LogEntry(
+                    text,
+                    entry_id=entry_id,
+                    expanded=entry_id in self._expanded_entries,
+                    on_toggle=self.toggle_entry,
+                )
+            )
+            if self._follow_tail:
+                container.scroll_end(animate=False)
         except Exception:
             pass
 
     def clear(self) -> None:
         try:
-            log = self.query_one("#log-output", RichLog)
-            log.clear()
-            self._has_entries = False
+            container = self.query_one("#log-output", LogScroll)
+            for child in list(container.children):
+                child.remove()
+            self._entries = []
+            self._expanded_entries = set()
+        except Exception:
+            pass
+
+    def on_resize(self, event: Resize) -> None:
+        self._rerender_entries()
+
+    def _rerender_entries(self) -> None:
+        try:
+            container = self.query_one("#log-output", LogScroll)
+            for child in list(container.children):
+                child.remove()
+            for entry_id, entry in enumerate(self._entries):
+                container.mount(
+                    LogEntry(
+                        entry,
+                        entry_id=entry_id,
+                        expanded=entry_id in self._expanded_entries,
+                        on_toggle=self.toggle_entry,
+                    )
+                )
+            if self._follow_tail:
+                container.scroll_end(animate=False)
         except Exception:
             pass
 
     def toggle_follow(self) -> None:
-        self._follow_tail = not self._follow_tail
+        self.resume_follow()
+        try:
+            container = self.query_one("#log-output", LogScroll)
+            container.scroll_end(animate=False)
+        except Exception:
+            pass
 
     def pause_follow(self) -> None:
         self._follow_tail = False
@@ -469,13 +585,20 @@ class LogPanel(Widget, can_focus=False):
     def resume_follow(self) -> None:
         self._follow_tail = True
 
+    def toggle_entry(self, entry_id: int) -> None:
+        if entry_id in self._expanded_entries:
+            self._expanded_entries.remove(entry_id)
+        else:
+            self._expanded_entries.add(entry_id)
+        self._rerender_entries()
+
     def scroll_up(self) -> None:
         self.pause_follow()
-        log = self.query_one("#log-output", RichLog)
+        log = self.query_one("#log-output", LogScroll)
         log.scroll_up(animate=False, immediate=True)
 
     def scroll_down(self) -> None:
-        log = self.query_one("#log-output", RichLog)
+        log = self.query_one("#log-output", LogScroll)
         log.scroll_down(animate=False, immediate=True)
         if log.is_vertical_scroll_end:
             self.resume_follow()
@@ -530,7 +653,7 @@ class RunScreen(Screen):
         with Horizontal(classes="run-main"):
             yield RunStagePanel(id="run-stage-strip")
             yield LogPanel(id="log-panel")
-        yield RunStatusBar(id="run-status")
+        yield RunStatusBar(show_prompt=self._state.show_prompt, id="run-status")
 
     def on_mount(self) -> None:
         if self._state.run_view.status == "running":

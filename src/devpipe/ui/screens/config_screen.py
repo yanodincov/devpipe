@@ -64,7 +64,7 @@ class ConfigScreen(Screen):
             nav._profile = self._state.form.profile
             yield nav
             yield DetailPanel(id="detail-panel")
-        yield StatusBar(id="status-bar")
+        yield StatusBar(show_prompt=self._state.show_prompt, id="status-bar")
 
     def on_mount(self) -> None:
         self._update_display()

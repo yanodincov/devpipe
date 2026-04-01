@@ -145,7 +145,8 @@ def test_run_requested_seeds_timeline_before_screen_is_shown(tmp_path):
 
     app.on_config_screen_run_requested(ConfigScreen.RunRequested())
 
-    assert [attempt.stage for attempt in app._ui_state.run_view.timeline] == ["developer", "qa_local", "release"]
+    # Timeline starts empty — stages are added as they activate during the run
+    assert app._ui_state.run_view.timeline == []
     assert app._ui_state.run_view.status == "running"
     assert pushed
 
