@@ -1,0 +1,25 @@
+runners:
+  codex:
+    command: ["codex"]
+    timeout: 300
+    model:
+      low: gpt-5.4-mini
+      middle: gpt-5.3-codex
+      high: gpt-5.4
+    effort:
+      low: low
+      middle: medium
+      high: hight
+      extra: extra-hight
+  claude:
+    command: ["claude"]
+    timeout: 300
+    model:
+      low: haiku
+      middle: sonnet
+      high: opus
+    effort:
+      low: low
+      middle: medium
+      high: high
+      extra: high

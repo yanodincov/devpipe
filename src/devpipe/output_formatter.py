@@ -24,6 +24,7 @@ def build_exec_json_response(
             final_output = next(reversed(stage_outputs.values()))
 
     return {
+        "type": "final",
         "run_id": state.run_id,
         "status": state.status,
         "profile": request.profile,
@@ -39,6 +40,7 @@ def build_exec_json_response(
 def build_exec_error_response(error: Exception, run_id: str | None = None) -> dict[str, Any]:
     """Build machine-readable failure payload."""
     payload: dict[str, Any] = {
+        "type": "error",
         "status": "failed",
         "error": {
             "type": error.__class__.__name__,

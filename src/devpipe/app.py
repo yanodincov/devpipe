@@ -12,17 +12,17 @@ from devpipe.runtime.engine import PipelineEngine
 from devpipe.runtime.events import Event, EventType
 from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import PipelineState
+from devpipe.engines import (
+    discover_available_engines,
+    load_runner_runtime_config,
+    load_runtime_runner_profiles,
+    resolve_engine_choice,
+)
 from devpipe.runners.claude import ClaudeRunner
 from devpipe.runners.command import CommandRunner
 from devpipe.runners.codex import CodexRunner
-from devpipe.runners.profile_map import (
-    RunnerProfiles,
-    load_runner_profiles,
-    resolve_effort,
-    resolve_model,
-)
+from devpipe.runners.profile_map import RunnerProfiles, resolve_effort, resolve_model
 from devpipe.storage.artifact_store import ArtifactStore
-from devpipe.storage.config_store import ConfigStore
 from devpipe.storage.run_logger import RunLogger
 
 
@@ -320,7 +320,11 @@ class OrchestratorApp:
                         user_tags_for_stage = list(config.tags)
 
                 if stage_spec.type == StageType.AI:
-                    actual_runner_name = stage_spec.default_engine if config.runner == "auto" else config.runner
+                    actual_runner_name = resolve_engine_choice(
+                        requested_runner=config.runner,
+                        stage_default_engine=stage_spec.default_engine or "",
+                        available_engines=list(self.runners.keys()),
+                    )
                     runner = self.runners[actual_runner_name]
                     state.selected_runner = actual_runner_name
                     model_level = stage_spec.model if config.model in {None, "", "auto"} else config.model
@@ -505,30 +509,32 @@ class OrchestratorApp:
 
 
 def build_default_app(base_dir: str | Path, show_prompt: bool = False) -> OrchestratorApp:
-    base = Path(base_dir)
-    config_store = ConfigStore(base / "config" / "runners.yaml")
-    raw_config = config_store.load()
+    del base_dir
+    project_root = Path.cwd()
+    raw_config = load_runner_runtime_config(project_root=project_root)
     runner_config = raw_config.get("runners", {})
-    runner_profiles = load_runner_profiles(raw_config)
+    runner_profiles = load_runtime_runner_profiles(project_root=project_root)
+    available_engines = discover_available_engines(runner_config)
+    runners: dict[str, object] = {}
 
     codex_config = runner_config.get("codex", {})
-    claude_config = runner_config.get("claude", {})
-    runners = {
-        "codex": CodexRunner(
+    if "codex" in available_engines:
+        runners["codex"] = CodexRunner(
             command=codex_config.get("command", ["codex"]),
             timeout=int(codex_config.get("timeout", 300)),
             show_prompt=show_prompt,
-        ),
-        "claude": ClaudeRunner(
+        )
+    claude_config = runner_config.get("claude", {})
+    if "claude" in available_engines:
+        runners["claude"] = ClaudeRunner(
             command=claude_config.get("command", ["claude"]),
             timeout=int(claude_config.get("timeout", 300)),
             show_prompt=show_prompt,
-        ),
-    }
+        )
 
     return OrchestratorApp(
         runners=runners,
-        runs_dir=base / "runs",
-        project_root=Path.cwd(),
+        runs_dir=project_root / ".devpipe" / "runs",
+        project_root=project_root,
         runner_profiles=runner_profiles,
     )

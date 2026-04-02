@@ -6,9 +6,10 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from devpipe.app import build_default_app
+from devpipe.completion import install_shell_completion
+from devpipe.engines import discover_available_engines, load_runner_runtime_config
 from devpipe.output_formatter import build_exec_error_response, build_exec_json_response
 from devpipe.profiles.loader import find_project_root
 from devpipe.profiles.validator import validate_profile, validate_all_profiles
@@ -22,10 +23,16 @@ def main(argv: list[str] | None = None) -> int:
 
     if args and args[0] == "validate":
         return validate_command(args[1:])
+    if args and args[0] == "doctor":
+        return doctor_command(args[1:])
+    if args and args[0] == "install-completion":
+        return install_completion_command(args[1:])
+    if args and args[0] == "list-engines":
+        return list_engines_command(args[1:])
     if args and args[0] == "exec":
         return exec_command(args[1:])
 
-    show_prompt = "--show-prompt" in args or "--show-prompts" in args
+    show_prompt = "--show-prompt" in args or "--with-thinking" in args
     project_root = find_project_root() or Path.cwd()
     app = DevpipeTextualApp(project_root=project_root, show_prompt=show_prompt)
     app.run()
@@ -46,8 +53,7 @@ def exec_command(argv: list[str]) -> int:
     parser.add_argument("--start-agent")
     parser.add_argument("--stop-agent")
     parser.add_argument("--topic")
-    parser.add_argument("--show-prompts", action="store_true")
-    parser.add_argument("--output", choices=("default", "json"), default="default")
+    parser.add_argument("--with-thinking", action="store_true")
     ns = parser.parse_args(argv)
 
     overrides = {
@@ -61,41 +67,34 @@ def exec_command(argv: list[str]) -> int:
         "start_agent": ns.start_agent,
         "stop_agent": ns.stop_agent,
         "topic": ns.topic,
-        "show_prompts": ns.show_prompts,
-        "output": ns.output,
+        "with_thinking": ns.with_thinking,
     }
     request = load_exec_request(ns.pipe_file, overrides)
     config = request.to_run_config()
 
     project_root = find_project_root() or Path.cwd()
     bundle_root = Path(__file__).resolve().parents[2]
-    app = build_default_app(bundle_root, show_prompt=request.show_prompts)
-    if request.output == "default":
-        _attach_default_output_callbacks(app.runners)
+    app = build_default_app(bundle_root, show_prompt=request.with_thinking)
+    if request.with_thinking:
+        _attach_jsonl_output_callbacks(app.runners)
 
     try:
         state = app.run(
             config,
-            on_stage_start=_print_stage_start if request.output == "default" else None,
-            on_stage_complete=_print_stage_complete if request.output == "default" else None,
+            on_stage_start=_emit_stage_start if request.with_thinking else None,
+            on_stage_complete=_emit_stage_complete if request.with_thinking else None,
         )
     except Exception as exc:
-        if request.output == "json":
-            print(json.dumps(build_exec_error_response(exc), ensure_ascii=False))
-        else:
-            print(f"Run failed: {exc}", file=sys.stderr)
+        print(json.dumps(build_exec_error_response(exc), ensure_ascii=False))
         return 1
 
     history_dir = project_root / ".devpipe" / "history"
-    if request.output == "json":
-        print(json.dumps(build_exec_json_response(state, request, history_dir), ensure_ascii=False))
-    else:
-        _print_default_result(state, history_dir)
+    print(json.dumps(build_exec_json_response(state, request, history_dir), ensure_ascii=False))
     return 0 if state.status == "completed" else 1
 
 
-def _attach_default_output_callbacks(runners: dict[str, Any]) -> None:
-    """Wire runner output to stdout for default exec mode."""
+def _attach_jsonl_output_callbacks(runners) -> None:
+    """Wire runner output to stdout for JSONL thinking mode."""
     for runner in runners.values():
         if hasattr(runner, "output_callback"):
             runner.output_callback = _stdout_chunk
@@ -108,31 +107,25 @@ def _stdout_chunk(text: str) -> None:
     sys.stdout.flush()
 
 
-def _print_stage_start(stage: str, runner: str, model: str, effort: str) -> None:
-    meta = [runner]
-    if model:
-        meta.append(model)
-    if effort:
-        meta.append(effort)
-    print(f"==> {stage} [{' | '.join(meta)}]")
+def _emit_stage_start(stage: str, runner: str, model: str, effort: str) -> None:
+    payload = {
+        "type": "stage_started",
+        "stage": stage,
+        "runner": runner,
+        "model": model,
+        "effort": effort,
+    }
+    print(json.dumps(payload, ensure_ascii=False))
 
 
-def _print_stage_complete(stage: str, output: dict, tokens: int = 0) -> None:
-    suffix = f" ({tokens} tokens)" if tokens else ""
-    print(f"<== {stage}{suffix}")
-
-
-def _print_default_result(state, history_dir: Path) -> None:
-    from devpipe.history import load_run_details
-
-    details = load_run_details(history_dir, state.run_id)
-    print(f"Run: {state.run_id}")
-    print(f"Status: {state.status}")
-    if details is not None and details.stages:
-        final_output = details.stages[-1].output
-        if final_output:
-            print("Final:")
-            print(json.dumps(final_output, ensure_ascii=False, indent=2))
+def _emit_stage_complete(stage: str, output: dict, tokens: int = 0) -> None:
+    payload = {
+        "type": "stage_completed",
+        "stage": stage,
+        "tokens": tokens,
+        "output": output,
+    }
+    print(json.dumps(payload, ensure_ascii=False))
 
 
 def validate_command(args: list[str] | None) -> int:
@@ -180,6 +173,36 @@ def validate_command(args: list[str] | None) -> int:
             all_valid = False
 
     return 0 if all_valid else 1
+
+
+def list_engines_command(args: list[str] | None = None) -> int:
+    del args
+    project_root = find_project_root() or Path.cwd()
+    runner_config = load_runner_runtime_config(project_root=project_root).get("runners", {})
+    for engine in discover_available_engines(runner_config):
+        print(engine)
+    return 0
+
+
+def doctor_command(args: list[str] | None = None) -> int:
+    del args
+    project_root = find_project_root() or Path.cwd()
+    runner_config = load_runner_runtime_config(project_root=project_root).get("runners", {})
+    available = discover_available_engines(runner_config)
+    if not available:
+        print("No available AI engines found. Install codex or claude.")
+        return 1
+    print("Available AI engines: " + ", ".join(available))
+    return 0
+
+
+def install_completion_command(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="devpipe install-completion")
+    parser.add_argument("shell", choices=("zsh", "bash"))
+    ns = parser.parse_args(argv)
+    target = install_shell_completion(ns.shell)
+    print(target)
+    return 0
 
 
 if __name__ == "__main__":

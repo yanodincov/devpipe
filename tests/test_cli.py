@@ -9,14 +9,28 @@ from devpipe.history import RunDetailsEntry, StageRun, save_run_details
 from devpipe.runtime.state import PipelineState
 
 
+class FakeRunner:
+    def __init__(self) -> None:
+        self.output_callback = None
+
+
 class FakeApp:
     def __init__(self, project_root: Path) -> None:
         self.project_root = project_root
-        self.runners = {}
+        self.runners = {"codex": FakeRunner()}
         self.seen_config = None
 
     def run(self, config, on_stage_start=None, on_stage_complete=None):
         self.seen_config = config
+        if on_stage_start is not None:
+            on_stage_start("write", "codex", "gpt-5.4-mini", "low")
+        runner = self.runners["codex"]
+        if runner.output_callback is not None:
+            runner.output_callback('{"type":"action","action":"pwd","result":"/tmp"}\n')
+            runner.output_callback('{"type":"thinking","text":"step by step"}\n')
+        if on_stage_complete is not None:
+            on_stage_complete("write", {"summary": "done"}, tokens=123)
+
         state = PipelineState.create(
             task_id=config.task_id or "no-id",
             task_text=config.task,
@@ -47,7 +61,7 @@ class FakeApp:
         return state
 
 
-def test_exec_command_merges_pipe_file_with_flag_overrides_json_output(tmp_path, monkeypatch, capsys):
+def test_exec_command_merges_pipe_file_with_flag_overrides_and_returns_final_json(tmp_path, monkeypatch, capsys):
     pipe_file = tmp_path / "release.devpipe.yaml"
     pipe_file.write_text(
         """
@@ -79,8 +93,6 @@ topic: from-file
             "--start-agent=expand",
             "--stop-agent=finalize",
             "--topic=override-topic",
-            "--show-prompts",
-            "--output=json",
         ]
     )
 
@@ -94,12 +106,13 @@ topic: from-file
     assert fake_app.seen_config.extra_params["topic"] == "override-topic"
 
     payload = json.loads(capsys.readouterr().out)
+    assert payload["type"] == "final"
     assert payload["status"] == "completed"
     assert payload["final"]["final"] == "done"
     assert payload["profile"] == "delivery"
 
 
-def test_exec_command_default_output_prints_human_readable_result(tmp_path, monkeypatch, capsys):
+def test_exec_command_with_thinking_streams_jsonl_and_final_event(tmp_path, monkeypatch, capsys):
     fake_app = FakeApp(tmp_path)
     monkeypatch.setattr(cli, "find_project_root", lambda: tmp_path)
     monkeypatch.setattr(cli, "build_default_app", lambda *args, **kwargs: fake_app)
@@ -110,12 +123,25 @@ def test_exec_command_default_output_prints_human_readable_result(tmp_path, monk
             "--profile=delivery",
             "--task=hello",
             "--runner=codex",
-            "--output=default",
+            "--with-thinking",
         ]
     )
 
     assert code == 0
-    stdout = capsys.readouterr().out
-    assert "Run: run-123" in stdout
-    assert "Status: completed" in stdout
-    assert '"final": "done"' in stdout
+    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines[0]["type"] == "stage_started"
+    assert lines[1]["type"] == "action"
+    assert lines[2]["type"] == "thinking"
+    assert lines[3]["type"] == "stage_completed"
+    assert lines[-1]["type"] == "final"
+    assert lines[-1]["final"]["final"] == "done"
+
+
+def test_doctor_command_returns_non_zero_when_no_engines(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "find_project_root", lambda: Path.cwd())
+    monkeypatch.setattr(cli, "discover_available_engines", lambda *_args, **_kwargs: [])
+
+    code = cli.main(["doctor"])
+
+    assert code == 1
+    assert "No available AI engines found" in capsys.readouterr().out

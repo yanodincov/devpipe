@@ -269,6 +269,65 @@ routing:
     assert state.artifacts["stage_outputs"]["finalize"]["final"] == "done"
 
 
+def test_orchestrator_auto_runner_falls_back_when_stage_default_missing(tmp_path: Path, monkeypatch) -> None:
+    profile_dir = tmp_path / ".devpipe" / "profiles" / "auto-fallback"
+    profile_dir.mkdir(parents=True)
+    (tmp_path / ".devpipe" / "runs").mkdir(parents=True)
+    write_agent(profile_dir, "write", "result")
+    monkeypatch.setattr(history_module, "save_run_replay_config", lambda run_id, entry, runs_dir: None)
+    monkeypatch.setattr(history_module, "save_run_details", lambda entry, runs_dir: None)
+
+    (profile_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: auto-fallback
+inputs:
+  task:
+    type: string
+    default: ""
+    custom: true
+stages:
+  write:
+    type: ai
+    default_engine: claude
+    model: low
+    effort: low
+    agent:
+      folder: write
+    out:
+      result:
+        type: string
+routing:
+  start_stage: write
+  by_stage:
+    write:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runner = FakeRunner({"write": {"result": "done"}})
+    app = OrchestratorApp(
+        runners={"codex": runner},
+        runs_dir=tmp_path / "runs",
+        project_root=tmp_path,
+        runner_profiles=_runner_profiles(),
+    )
+
+    state = app.run(
+        RunConfig(
+            profile="auto-fallback",
+            task="Fallback test",
+            runner="auto",
+        )
+    )
+
+    assert state.status == "completed"
+    assert state.selected_runner == "codex"
+
+
 def test_orchestrator_writes_stage_failure_debug_log(tmp_path: Path, monkeypatch) -> None:
     profile_dir = tmp_path / ".devpipe" / "profiles" / "broken"
     profile_dir.mkdir(parents=True)

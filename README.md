@@ -1,49 +1,80 @@
 # devpipe
 
-AI-агент оркестратор для автоматизации цикла разработки. Запускает шесть ролей последовательно, каждую выполняет Codex или Claude по заданным промптам и правилам.
+`devpipe` is a pipeline orchestrator for development workflows. A pipeline is made of typed stages:
 
-```
-architect → developer → test_developer → qa_local → release → qa_stand
-```
+- `ai` stages run an agent through an AI engine such as `codex` or `claude`
+- `cmd` stages run a local command without calling an LLM
 
----
+Pipelines are defined in `.devpipe/profiles/<profile>/pipeline.yml` and can be executed either through the interactive TUI or through `devpipe exec`.
 
-## Установка
+## Installation
+
+### End-user installation
+
+`python3` is required. The recommended install flow is a single command:
 
 ```bash
-mise install        # устанавливает python 3.13
-mise run install    # создаёт .venv и устанавливает зависимости
+curl -fsSL https://raw.githubusercontent.com/yanodincov/devpipe/main/install.sh | sh
 ```
 
-Без mise:
+The installer:
+
+- creates `~/.devpipe/venv`
+- installs `devpipe` from GitHub
+- creates the launcher at `~/.local/bin/devpipe`
+- creates `~/.devpipe/config.yaml` if it does not exist yet
+- installs shell completion for the current shell when possible
+
+After installation:
+
+```bash
+devpipe doctor
+```
+
+By default the installer uses `main`. To install a specific tag:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/yanodincov/devpipe/main/install.sh | DEVPIPE_REF=v0.1.0 sh
+```
+
+### Local development
+
+```bash
+mise install
+mise run install
+```
+
+Without `mise`:
+
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ```
 
----
-
-## Запуск
+## Commands
 
 ```bash
-devpipe                    # интерактивное TUI
-devpipe validate           # валидация профилей
-devpipe exec --profile=... --task=...   # неинтерактивный запуск
-mise run                   # интерактивное TUI, если настроен mise
+devpipe
+devpipe validate
+devpipe doctor
+devpipe list-engines
+devpipe install-completion zsh
+devpipe install-completion bash
+devpipe exec --profile=... --task=...
 ```
 
-**Примечание:** devpipe можно запускать в любой директории. При отсутствии локальной конфигурации `.devpipe/` в проекте, приложение будет использовать глобальные профили из `~/.devpipe/profiles/`.
+`devpipe` can run from any directory. If the current project does not contain `.devpipe/`, global profiles from `~/.devpipe/profiles/` are used.
 
-### Неинтерактивный режим
+## Non-interactive Execution
 
-Есть два явных способа запуска `devpipe exec`:
+`devpipe exec` supports two explicit modes:
 
-1. Через replay-конфиг:
+1. Replay config file:
 
 ```bash
 devpipe exec --pipe-file=release.devpipe.yaml
 ```
 
-2. Полностью через флаги:
+2. Flags only:
 
 ```bash
 devpipe exec \
@@ -55,16 +86,15 @@ devpipe exec \
   --tags=release,docs \
   --start-agent=intake \
   --stop-agent=finalize \
-  --topic="release notes" \
-  --show-prompts \
-  --output=json
+  --topic="release notes"
 ```
 
-Допустим и смешанный режим:
-- `--pipe-file` загружает базовый replay-конфиг
-- прямые флаги переопределяют значения из файла
+Mixed mode is also supported:
 
-Если `--pipe-file` не указан, все параметры нужно передать через флаги.
+- `--pipe-file` loads the base replay config
+- explicit flags override values from the file
+
+Example:
 
 ```bash
 devpipe exec \
@@ -73,73 +103,88 @@ devpipe exec \
   --task="prepare release notes" \
   --start-agent=intake \
   --stop-agent=finalize \
-  --topic="release notes" \
-  --show-prompts \
-  --output=json
+  --topic="release notes"
 ```
 
-- `--pipe-file` загружает replay-конфиг из `.devpipe.yaml`
-- `--output=default` печатает человекочитаемый лог
-- `--output=json` возвращает machine-readable ответ с `run_id`, `status`, `final`, `summary`
-- `--show-prompts` включает печать промптов/structured prompt events в non-interactive запуске
+### `exec` output contract
 
-### Глобальные профили
+- `devpipe exec` always writes JSON to `stdout`
+- without `--with-thinking`, `stdout` contains exactly one final JSON object
+- with `--with-thinking`, `stdout` is JSONL:
+  - stage events
+  - action events
+  - thinking events
+  - final event as the last line
 
-Чтобы использовать devpipe без привязки к конкретному проекту, создайте профили в `~/.devpipe/profiles/`:
+There are no plain-text banners in `exec` mode.
+
+## Shell Completion
+
+The installer configures completion automatically when possible.
+
+Completion for `devpipe exec` includes:
+
+- `--pipe-file=*.devpipe.yaml`
+- `--profile=<profile>`
+- `--runner=auto|<available engines>`
+- `--with-thinking`
+
+## Global Profiles
+
+To use `devpipe` outside a specific project, create profiles in `~/.devpipe/profiles/`:
 
 ```bash
 mkdir -p ~/.devpipe/profiles/<profile_name>/
-# Скопируйте pipeline.yaml/yml и опционально agents/ из существующего проекта
 ```
 
-Можно также задать глобальный профиль по умолчанию через `~/.devpipe/config.yaml`:
+Copy `pipeline.yaml` or `pipeline.yml` there, and optionally `agents/`.
+
+You can also define a global default profile in `~/.devpipe/config.yaml`:
 
 ```yaml
 defaults:
   profile: my-global-profile
 ```
 
----
+## Interactive TUI
 
-## Интерактивное меню
+Typical fields:
 
-```
+```text
 task          <- required
 task-id       MRC-123        (from git branch)
-runner        codex
+runner        auto
 target-branch u1
 service       acquiring
 namespace     auto
 tags          acquiring-service, go
-  dataset      s4-3ds
 roles         architect -> qa_stand
 ```
 
-- **task-id** — подставляется автоматически из ветки (`MRC-123-my-feature` → `MRC-123`). Если указан — загружается контекст из Jira. Можно очистить чтобы пропустить Jira.
-- **target-branch** — стенд для деплоя. Если не указан — пайплайн останавливается на `qa_local`.
-- **tags** — список с множественным выбором. Параметры активных тегов появляются отдельными пунктами меню.
-- **first role / last role** — диапазон ограничен, невалидный выбрать нельзя.
-- **Run** — появляется только когда `task` заполнен.
+Notes:
 
----
+- `task-id` can be inferred from the current branch name, for example `MRC-123-my-feature -> MRC-123`
+- `target_branch` controls later release/deploy stages
+- `tags` support multi-select
+- `first_role` and `last_role` are bounded by the pipeline graph
+- the pipeline can only be started when required fields are filled
 
+## Project Configuration
 
-## Настройка проекта (.devpipe/)
+Create `.devpipe/` in the target project repository, not inside the `devpipe` repository.
 
-Создай `.devpipe/` в корне **рабочего репозитория** (не в devpipe). Именно оттуда devpipe читает конфигурацию при запуске.
-
-### config.yaml
+Example:
 
 ```yaml
 defaults:
-  runner: codex
+  runner: auto
   service: my-service
   tags:
-    - my-service          # проектный тег
-    - go                  # builtin тег
+    - my-service
+    - go
 
 available:
-  target_branch:          # список для выбора в TUI
+  target_branch:
     - u1
     - u1-1
   namespace:
@@ -147,108 +192,131 @@ available:
     - my-service-u1-1
 ```
 
-- `defaults` — начальные значения в TUI
-- `available` — если список заполнен, в TUI будет выпадашка; если пуст — свободный ввод
+Rules:
 
-### tags/
+- `defaults` define initial values for the TUI and CLI defaults
+- `available` turns fields into dropdown/select values in the UI
+- local `.devpipe/config.yaml` is merged on top of global `~/.devpipe/config.yaml`
+- engine-specific model and effort mapping belongs in `~/.devpipe/config.yaml`
 
-Кастомные теги проекта. Та же структура что и builtin `tags/` в этом репозитории.
+## User-Level Engine Mapping
 
+Global engine mapping is configured in `~/.devpipe/config.yaml`.
+
+Example:
+
+```yaml
+defaults:
+  runner: auto
+
+engines:
+  codex:
+    model:
+      low: gpt-5.4-mini
+      middle: gpt-5.3-codex
+      high: gpt-5.4
+    effort:
+      low: low
+      middle: medium
+      high: high
+      extra: xhigh
+  claude:
+    model:
+      low: haiku
+      middle: sonnet
+      high: opus
+    effort:
+      low: low
+      middle: medium
+      high: high
+      extra: high
 ```
-.devpipe/
-  config.yaml
-  tags/
-    my-service/
-      architect/
-        rules.md
-      developer/
-        rules.md
-      test_developer/
-        rules.md
-      qa_local/
-        rules.md
-      release/
-        rules.md
-      qa_stand/
-        rules.md
-        params.yaml       # параметры нужные qa_stand (опционально)
-```
 
----
+Runtime behavior:
 
-## Теги
+- only engines that are actually available in `PATH` are shown in the UI and completion
+- if no AI engines are available, validation and `devpipe doctor` fail
+- if `runner=auto`, `devpipe` tries the stage `default_engine` first and falls back to another available engine
 
-Теги позволяют добавлять контекстно-зависимые правила к промптам ролей. Когда тег активирован для определённой роли, содержимое `rules.md` дописывается к промпту.
+Example:
 
-### Где определяются теги
+- stage `default_engine: claude`
+- `claude` is missing
+- `codex` is installed
+- `auto` resolves to `codex`
 
-**1. В pipeline.yml — входной параметр `tags`:**
+## Tags
+
+Tags add role-specific rules to prompts.
+
+Tags can be defined in three places:
+
+1. In `pipeline.yml` as an input:
 
 ```yaml
 inputs:
   tags:
     type: string
-    multi: true        # множественный выбор
-    default: []        # список выбранных тегов
-    custom: true       # разрешить произвольные значения
-    values: [go, backend, frontend]  # доступные теги
+    multi: true
+    default: []
+    custom: true
+    values: [go, backend, frontend]
 ```
 
-**2. В pipeline.yml — теги для стадии:**
+2. In a stage:
 
 ```yaml
 stages:
   developer:
     type: ai
     default_engine: codex
-    tags: [go, backend]   # теги, применяемые к этой стадии
+    tags: [go, backend]
     agent:
       folder: developer
 ```
 
-**3. В config.yaml — теги по умолчанию:**
+3. In config defaults:
 
 ```yaml
 defaults:
   tags:
-    - my-service    # проектный тег
-    - go            # builtin тег
+    - my-service
+    - go
 ```
 
-### Как работают теги при формировании промпта
+Prompt assembly order:
 
-При запуске стадии промпт собирается так:
-
-```
-<базовый промпт из agents/<agent>/prompt.md>
+```text
+<base prompt from agents/<agent>/prompt.md>
 
 ## Project-Specific Rules
-<содержимое .devpipe/<STAGE>_RULES.md> если есть
+<content from .devpipe/<STAGE>_RULES.md if present>
 
 ## Tag Rules: go
-<содержимое tags/go/developer/rules.md>
+<content from tags/go/<stage>/rules.md>
 
 ## Tag Rules: my-service
-<содержимое .devpipe/tags/my-service/developer/rules.md>
+<content from .devpipe/tags/my-service/<stage>/rules.md>
 ```
 
-Порядок поиска `rules.md`:
-1. `.devpipe/tags/<tag>/<stage>/rules.md` — кастомные теги проекта
-2. `tags/<tag>/<stage>/rules.md` — builtin теги devpipe
+Lookup order for tag rules:
 
-Структура директории тега:
+1. `.devpipe/tags/<tag>/<stage>/rules.md`
+2. builtin `tags/<tag>/<stage>/rules.md`
 
-```
+Example tag directory layout:
+
+```text
 tags/
-└── go/                               # builtin тег "go"
+└── go/
     ├── developer/
-    │   └── rules.md                  # правила для developer
+    │   └── rules.md
     └── test_developer/
-        └── rules.md                  # правила для test_developer
+        └── rules.md
 
 .devpipe/
 └── tags/
-    └── my-service/                    # кастомный тег "my-service"
+    └── my-service/
         ├── architect/
         │   └── rules.md
         ├── developer/
@@ -257,80 +325,45 @@ tags/
             └── rules.md
 ```
 
-### Builtin теги
+Builtin tags:
 
-| Тег | Стадии | Описание |
-|-----|--------|----------|
-| `go` | `developer`, `test_developer` | Правила для Go-проектов |
+| Tag | Stages | Description |
+|-----|--------|-------------|
+| `go` | `developer`, `test_developer` | Rules for Go projects |
 
-### Интерфейс управления тегами
+## Agents
 
-В TUI поле **Tags** позволяет:
-1. **Выбрать теги** — нажмите `Space` для выбора/снятия
-2. **Настроить роли** — нажмите `Enter` на теге, чтобы выбрать роли, на которых он применяется
-3. **Заполнить параметры** — если у тега есть `params.yaml`, поля появятся автоматически
+Agents define the prompt and the output schema for an `ai` stage. They live in `.devpipe/profiles/<profile>/agents/<agent_name>/`.
 
-При изменении `Start Stage` / `Finish Stage` параметры автоматически пересчитываются — остаются только те, которые применимы к выбранным ролям.
-
----
-
-## Агенты (agents/)
-
-Агенты определяют промпт и схему выходных данных для каждой стадии. Хранятся в `.devpipe/profiles/<profile>/agents/<agent_name>/`.
-
-```
+```text
 agents/
 └── my_agent/
-    ├── prompt.md           # промпт для AI
-    └── output.schema.json  # JSON Schema выходных данных
+    ├── prompt.md
+    └── output.schema.json
 ```
 
-### Подключение агента к стадии
+Two supported forms:
 
-**Формат 1: по имени папки**
+1. Folder-based:
+
 ```yaml
-stages:
-  build:
-    agent:
-      folder: builder    # ищет agents/builder/prompt.md и output.schema.json
+agent:
+  folder: builder
 ```
 
-**Формат 2: явные пути**
+2. Explicit paths:
+
 ```yaml
-stages:
-  build:
-    agent:
-      prompt: agents/builder/prompt.md
-      schema: agents/builder/output.schema.json
+agent:
+  prompt: agents/builder/prompt.md
+  schema: agents/builder/output.schema.json
 ```
 
-### output.schema.json
+## Pipeline Schema
 
-Определяет структуру ответа AI. Пример:
+Profiles are stored in `.devpipe/profiles/<name>/pipeline.yml`.
 
-```json
-{
-  "type": "object",
-  "properties": {
-    "files_changed": {
-      "type": "array",
-      "items": { "type": "string" }
-    },
-    "summary": {
-      "type": "string"
-    }
-  },
-  "required": ["files_changed", "summary"]
-}
-```
-
----
-
-## Профили (pipeline.yml)
-
-Профили определяют структуру пайплайна: входные параметры, стадии выполнения и роутинг между ними. Профили хранятся в `.devpipe/profiles/<name>/pipeline.yml`.
-
-### Структура профиля
+Example:
 
 ```yaml
 version: 1
@@ -347,11 +380,6 @@ inputs:
     required: true
     default: ""
     custom: true
-  count:
-    type: int
-    default: 1
-    values: [1, 2, 3]
-    custom: false
 
 stages:
   build:
@@ -374,127 +402,76 @@ routing:
   by_stage:
     build:
       next_stages:
-        - stage: test
-          default: true
-    test:
-      next_stages:
         - stage: completed
           default: true
 ```
 
----
+### Top-level fields
 
-### version
+| Field | Type | Description |
+|------|------|-------------|
+| `version` | integer | Profile schema version. Currently only `1` is supported |
+| `name` | string | Profile name |
+| `defaults` | object | Run-level defaults |
+| `inputs` | object | User-facing pipeline inputs |
+| `stages` | object | Stage definitions |
+| `routing` | object | Stage graph |
 
-Обязательное поле. Версия формата профиля. На данный момент поддерживается только `version: 1`.
+### `defaults`
 
----
+| Field | Type | Description |
+|------|------|-------------|
+| `runner` | string | `auto`, `codex`, `claude` |
+| `model` | string | `auto`, `low`, `middle`, `medium`, `high` |
+| `effort` | string | `auto`, `low`, `middle`, `medium`, `high`, `extra` |
 
-### name
+### `inputs`
 
-Имя профиля. Используется для отображения и логирования.
-
----
-
-### defaults
-
-Глобальные настройки по умолчанию для всех стадий.
-
-| Поле | Тип | Описание |
-|------|-----|----------|
-| `runner` | string | Раннер: `auto`, `codex`, `claude` |
-| `model` | string | Модель: `auto`, `low`, `middle`, `medium`, `high` |
-| `effort` | string | Усилия: `auto`, `low`, `middle`, `medium`, `high` |
-
----
-
-### inputs
-
-Входные параметры пайплайна. Определяют поля, которые пользователь заполняет в TUI перед запуском.
+Example:
 
 ```yaml
 inputs:
   my_field:
-    type: string          # string, int, bool, object, array
-    required: true        # обязательное поле
-    default: ""           # значение по умолчанию
-    values: [a, b, c]     # допустимые значения (опционально)
-    multi: false          # множественный выбор (опционально)
-    custom: true          # разрешить произвольные значения (опционально)
+    type: string
+    required: true
+    default: ""
+    values: [a, b, c]
+    multi: false
+    custom: true
 ```
 
-#### Типы полей
+Supported input types:
 
-| Тип | Описание |
-|-----|----------|
-| `string` | Строка |
-| `int` | Целое число |
-| `bool` | Булево значение (`true`/`false`) |
-| `object` | JSON-объект |
-| `array` | Массив |
+| Type | Description |
+|------|-------------|
+| `string` | string value |
+| `int` | integer |
+| `bool` | boolean |
+| `object` | JSON object |
+| `array` | JSON array |
 
-#### Валидация входных полей
+Validation notes:
 
-- `required: true` — поле обязательно для заполнения
-- `default` — если `custom: false` и есть `values`, значение должно быть из списка
-- `multi: false` — `default` не может быть списком `[]`
-- `multi: true` — `default` должен быть списком (пустым или с значениями из `values`)
-- Имена `runner`, `profile`, `first_role`, `last_role`, `model`, `effort` зарезервированы
+- `required: true` means the field must be filled
+- if `custom: false` and `values` exist, the value must come from that set
+- reserved input names: `runner`, `profile`, `first_role`, `last_role`, `model`, `effort`
 
-#### Примеры
+### `stages`
 
-```yaml
-# Простое строковое поле с произвольным вводом
-task:
-  type: string
-  required: true
-  default: ""
-  custom: true
+There are two stage types:
 
-# Выбор из списка
-environment:
-  type: string
-  default: "dev"
-  values: ["dev", "staging", "prod"]
-  custom: false
+- `type: ai`
+- `type: cmd`
 
-# Множественный выбор
-services:
-  type: string
-  multi: true
-  default: []
-  values: ["api", "web", "worker"]
-  custom: true
+For `ai` stages, use `default_engine`. The field `runner` is only run-level.
 
-# Целое число
-count:
-  type: int
-  default: 1
-  values: [1, 2, 3, 5]
-  custom: true
-
-# Булево значение
-dry_run:
-  type: bool
-  default: false
-```
-
----
-
-### stages
-
-Определяет стадии выполнения пайплайна. Стадия может быть двух типов:
-
-- `type: ai` — запуск AI-агента с промптом и JSON schema
-- `type: cmd` — выполнение локальной команды без обращения к ИИ
-
-Для `ai` стадии используется `default_engine`, а не `runner`. Поле `runner` остается только на уровне запуска пайплайна и `defaults`.
+Example:
 
 ```yaml
 stages:
-  <stage_name>:
+  build:
     type: ai
-    default_engine: codex    # ai backend по умолчанию: codex | claude
+    default_engine: codex
     model: high
     effort: middle
     retry_limit: 2
@@ -503,28 +480,27 @@ stages:
       folder: builder
     in:
       task: input.task
-      artifacts: stage.build.out.artifacts
     out:
       result:
         type: object
 ```
 
-#### Поля стадии
+Stage fields:
 
-| Поле | Тип | Обязательное | Описание |
-|------|-----|--------------|----------|
-| `type` | string | да | Тип стадии: `ai` или `cmd` |
-| `default_engine` | string | для `ai` | AI backend по умолчанию: `codex`, `claude` |
-| `model` | string | для `ai` | Модель: `auto`, `low`, `middle`, `medium`, `high` |
-| `effort` | string | для `ai` | Усилия: `auto`, `low`, `middle`, `medium`, `high` |
-| `retry_limit` | int | нет | Лимит повторов (>= 0, целое). По умолчанию 1 |
-| `tags` | list | нет | Список тегов для правил |
-| `agent` | object | для `ai` | Спецификация агента (см. ниже) |
-| `command` | object | для `cmd` | Конфиг выполнения команды |
-| `in` | dict | нет | Входные привязки |
-| `out` | dict | нет | Выходные поля |
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `type` | string | yes | `ai` or `cmd` |
+| `default_engine` | string | for `ai` | preferred engine for the stage |
+| `model` | string | for `ai` | model level |
+| `effort` | string | for `ai` | reasoning level |
+| `retry_limit` | int | no | retry count |
+| `tags` | list | no | tags applied to the stage |
+| `agent` | object | for `ai` | agent spec |
+| `command` | object | for `cmd` | command execution spec |
+| `in` | object | no | input bindings |
+| `out` | object | no | output schema |
 
-#### Пример `cmd` стадии
+Example `cmd` stage:
 
 ```yaml
 stages:
@@ -543,74 +519,31 @@ stages:
         type: string
 ```
 
-#### Спецификация агента (agent)
+### Input bindings
 
-Агент определяет промпт и схему выходных данных. Два формата:
-
-**Формат 1: folder** — загружает файлы из `agents/<folder>/`
-```yaml
-agent:
-  folder: builder    # ищет agents/builder/prompt.md и agents/builder/output.schema.json
-```
-
-**Формат 2: prompt + schema** — явные пути к файлам
-```yaml
-agent:
-  prompt: agents/builder/prompt.md
-  schema: agents/builder/output.schema.json
-```
-
-Валидация:
-- Обязательны либо `folder`, либо оба `prompt` и `schema`
-- Файлы должны существовать
-- `output.schema.json` должен быть валидным JSON
-
-#### Входные привязки (in)
-
-Связывают входные данные стадии с источниками:
+Examples:
 
 ```yaml
 in:
-  task: input.task                              # из inputs
-  config: context.config                        # из контекста
-  artifacts: stage.build.out.artifacts          # из выхода другой стадии
-  branch: runtime.git.current_branch             # из runtime
+  task: input.task
+  config: context.config
+  artifacts: stage.build.out.artifacts
+  branch: runtime.git.current_branch
 ```
 
-Форматы:
-- `input.<field>` — значение из inputs
-- `context.<field>` — значение из контекста
-- `stage.<name>.out.<field>` — выходное поле другой стадии
-- `runtime.<source>.<field>` — runtime-значение
-- `integration.<service>.<field>` — интеграционные данные
+Supported sources:
 
-Условные выражения:
-```yaml
-plan: stage.fix.out.updated_plan if stage.fix.out.changes_made else stage.init.out.initial_plan
-```
+- `input.<field>`
+- `context.<field>`
+- `stage.<name>.out.<field>`
+- `runtime.<source>.<field>`
+- `integration.<service>.<field>`
 
-#### Выходные поля (out)
+### `routing`
 
-Определяют структуру выходных данных стадии:
+Routing defines stage transitions.
 
-```yaml
-out:
-  result:
-    type: object
-    properties:
-      status:
-        type: string
-      count:
-        type: int
-```
-
-Рекомендуется определять `properties` для типа `object`.
-
----
-
-### routing
-
-Определяет порядок выполнения стадий и переходы между ними.
+Example:
 
 ```yaml
 routing:
@@ -622,76 +555,48 @@ routing:
           default: true
     test:
       next_stages:
-        - stage: deploy
-          all:
-            - field: out.passed
-              op: eq
-              value: true
-        - stage: failed
+        - stage: completed
           default: true
 ```
 
-#### start_stage
-
-Обязательное поле. Имя первой стадии пайплайна.
-
-#### by_stage
-
-Определяет переходы для каждой стадии. Каждая стадия может иметь несколько возможных следующих стадий с условиями.
+Conditional routing example:
 
 ```yaml
 by_stage:
-  <stage_name>:
+  test:
     next_stages:
-      - stage: <target_stage>
-        default: true      # переход по умолчанию
-      - stage: <target>
-        all: [...]         # переход если ALL условия истинны
-      - stage: <target>
-        any: [...]         # переход если ANY условие истинно
+      - stage: deploy
+        all:
+          - field: out.passed
+            op: eq
+            value: true
+      - stage: failed
+        default: true
 ```
 
-#### Условия перехода
+Operators:
 
-Каждое условие проверяет поле выхода текущей стадии:
+| Operator | Description |
+|---------|-------------|
+| `eq` | equals |
+| `neq` | not equals |
+| `gt` | greater than |
+| `gte` | greater than or equal |
+| `lt` | less than |
+| `lte` | less than or equal |
+| `in` | value is in a list |
+| `contains` | collection contains value |
 
-```yaml
-all:
-  - field: out.passed
-    op: eq
-    value: true
-  - field: out.count
-    op: gt
-    value: 0
-```
+Special terminal stages:
 
-| Оператор | Описание |
-|---------|----------|
-| `eq` | равно |
-| `ne` | не равно |
-| `gt` | больше |
-| `gte` | больше или равно |
-| `lt` | меньше |
-| `lte` | меньше или равно |
-| `in` | значение в списке |
-| `contains` | строка содержит значение |
+- `completed`
+- `failed`
 
-В условиях можно ссылаться на:
-- `out.<field>` — выходное поле текущей стадии
-- `input.<field>` — входной параметр пайплайна
+There must be a path from `start_stage` to `completed`.
 
-#### Системные стадии
+## Example Project Layout
 
-- `completed` — успешное завершение пайплайна
-- `failed` — ошибка выполнения
-
-Обязательно должен быть путь от `start_stage` до `completed`.
-
----
-
-## Пример: acquiring
-
-```
+```text
 acquiring-repo/
   .devpipe/
     config.yaml
@@ -703,14 +608,15 @@ acquiring-repo/
         qa_local/rules.md
         release/rules.md
         qa_stand/
-          rules.md        ← инструкции по pw-exchange-buy
-          params.yaml     ← dataset param
+          rules.md
+          params.yaml
 ```
 
-`config.yaml`:
+Example config:
+
 ```yaml
 defaults:
-  runner: codex
+  runner: auto
   service: acquiring
   tags:
     - acquiring-service
@@ -727,32 +633,25 @@ available:
     - acquiring-u1-4
 ```
 
----
+## Repository Layout
 
-## Структура репозитория
-
-```
+```text
 devpipe/
-├── roles/              # базовые промпты и схемы вывода для каждой роли
-│   └── <role>/
-│       ├── prompt.md
-│       ├── role.yaml
-│       └── output.schema.json
-├── tags/               # builtin теги (универсальные, не проектные)
-│   └── go/
-│       ├── developer/rules.md
-│       └── test_developer/rules.md
 ├── config/
-│   └── runners.yaml        # настройки runners: команда, timeout, model/effort mapping
+│   └── runners.yaml
+├── tags/
+│   └── go/
+├── install.sh
 └── src/devpipe/
+    ├── app.py
     ├── cli.py
-    ├── tui.py              # интерактивное меню
-    ├── app.py              # RunConfig, OrchestratorApp
-    ├── tags.py             # загрузка тегов и params.yaml
-    ├── project_config.py   # загрузка .devpipe/config.yaml
-    ├── runtime/            # state machine, события, retry
-    ├── roles/              # загрузка ролей, сборка промптов
-    ├── runners/            # Codex и Claude адаптеры
-    ├── integrations/       # Jira, GitHub, Kubernetes, Git
-    └── storage/            # логи и артефакты запусков
+    ├── completion.py
+    ├── engines.py
+    ├── history.py
+    ├── project_config.py
+    ├── run_request.py
+    ├── runtime/
+    ├── runners/
+    ├── storage/
+    └── ui/
 ```

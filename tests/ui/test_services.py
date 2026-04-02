@@ -25,7 +25,15 @@ def test_prepare_initial_state_without_profiles_returns_empty(tmp_path):
         encoding="utf-8",
     )
 
-    data = prepare_initial_state(tmp_path)
+    from devpipe import ui as ui_pkg
+    import devpipe.ui.services as services
+
+    original = services.discover_available_engines
+    services.discover_available_engines = lambda *_args, **_kwargs: []
+    try:
+        data = prepare_initial_state(tmp_path)
+    finally:
+        services.discover_available_engines = original
 
     # No local profiles dir => no profile active, empty available profiles and stages
     assert data["profile"] == ""
@@ -35,6 +43,7 @@ def test_prepare_initial_state_without_profiles_returns_empty(tmp_path):
     assert data["defaults"]["runner"] == "auto"
     assert data["defaults"]["model"] == "auto"
     assert data["defaults"]["effort"] == "auto"
+    assert data["available_runners"] == ["auto"]
     # No custom fields from profile
     assert data["fields"] == []
 

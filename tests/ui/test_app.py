@@ -189,9 +189,15 @@ def test_handle_run_event_updates_run_state(tmp_path):
 
 
 def test_ensure_runtime_app_uses_devpipe_bundle_when_project_has_no_runner_config(tmp_path):
-    app = DevpipeTextualApp(project_root=tmp_path)
+    import devpipe.app as app_module
 
-    runtime_app = app._ensure_runtime_app()
+    app_module_discover = app_module.discover_available_engines
+    app_module.discover_available_engines = lambda *_args, **_kwargs: ["codex", "claude"]
+    app = DevpipeTextualApp(project_root=tmp_path)
+    try:
+        runtime_app = app._ensure_runtime_app()
+    finally:
+        app_module.discover_available_engines = app_module_discover
 
     assert "codex" in runtime_app.runners
     assert "claude" in runtime_app.runners

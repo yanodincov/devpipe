@@ -31,6 +31,7 @@ def load_defaults(
     available_stages: list[str],
     fields: list[FieldMeta],
     defaults: dict[str, Any],
+    available_runners: list[str] | None = None,
     available_tags: list[str] | None = None,
     profile_errors: list[str] | None = None,
     routing_graph: dict[str, set[str]] | None = None,
@@ -42,6 +43,8 @@ def load_defaults(
     new.form.available_stages = available_stages
     new.form.fields = fields
     new.form.values = dict(defaults)
+    if available_runners is not None:
+        new.form.available_runners = available_runners
     if available_tags is not None:
         new.form.available_tags = available_tags
     new.form.profile_errors = profile_errors or []

@@ -57,6 +57,7 @@ def _make_state() -> UIState:
         available_stages=["architect", "developer", "qa_local"],
         fields=fields,
         defaults={"task": "", "runner": "auto"},
+        available_runners=["auto", "codex", "claude"],
     )
 
 
@@ -280,4 +281,3 @@ def write_agent(profile_dir: Path, name: str) -> None:
         '{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}',
         encoding="utf-8",
     )
-

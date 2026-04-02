@@ -1,0 +1,73 @@
+#compdef devpipe
+
+_devpipe_profiles() {
+  local -a profiles
+  local dir
+
+  for dir in .devpipe/profiles ~/.devpipe/profiles; do
+    [[ -d "$dir" ]] || continue
+    profiles+=(${dir}/*(/:t))
+  done
+
+  compadd -a profiles
+}
+
+_devpipe_engines() {
+  local -a engines
+  engines=(auto ${${(f)"$(devpipe list-engines 2>/dev/null)"}:#})
+  compadd -a engines
+}
+
+_devpipe_exec() {
+  local context state state_descr line
+
+  _arguments -C \
+    '--pipe-file=[Replay config file]:pipe file:_files -g "*.devpipe.yaml"' \
+    '--profile=[Profile name]:profile:->profile' \
+    '--task=[Task text]:task:' \
+    '--task-id=[Task ID]:task id:' \
+    '--runner=[Run-level backend override]:runner:->runner' \
+    '--model=[Model level]:model:(auto low middle medium high)' \
+    '--effort=[Reasoning effort]:effort:(auto low middle medium high extra)' \
+    '--tags=[Comma-separated tags]:tags:' \
+    '--start-agent=[First stage to run]:stage:' \
+    '--stop-agent=[Last stage to run]:stage:' \
+    '--topic=[Topic]:topic:' \
+    '--with-thinking[Stream JSONL thinking and action events before final JSON]' \
+    '*:args:_files'
+
+  case "$state" in
+    profile)
+      _devpipe_profiles
+      ;;
+    runner)
+      _devpipe_engines
+      ;;
+  esac
+}
+
+_devpipe() {
+  local context state state_descr line
+
+  _arguments -C \
+    '1:command:(exec validate doctor install-completion list-engines)' \
+    '*::args:->args'
+
+  case "$state" in
+    args)
+      case "${words[2]}" in
+        exec)
+          _devpipe_exec
+          ;;
+        install-completion)
+          _values 'shell' zsh bash
+          ;;
+        validate)
+          _files
+          ;;
+      esac
+      ;;
+  esac
+}
+
+_devpipe "$@"

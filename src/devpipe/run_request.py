@@ -23,8 +23,7 @@ class ExecRequest:
     stop_agent: str | None = None
     topic: str | None = None
     extra_params: dict[str, Any] = field(default_factory=dict)
-    output: str = "default"
-    show_prompts: bool = False
+    with_thinking: bool = False
 
     def to_run_config(self) -> RunConfig:
         extra_params = dict(self.extra_params)
@@ -74,8 +73,7 @@ def load_exec_request(pipe_file: str | Path | None, overrides: dict[str, Any]) -
         "start_agent",
         "stop_agent",
         "topic",
-        "output",
-        "show_prompts",
+        "with_thinking",
     }
     for key, value in merged.items():
         if key not in known and key != "extra_params":
@@ -93,8 +91,7 @@ def load_exec_request(pipe_file: str | Path | None, overrides: dict[str, Any]) -
         stop_agent=merged.get("stop_agent"),
         topic=merged.get("topic"),
         extra_params=extra_params,
-        output=merged.get("output", "default"),
-        show_prompts=bool(merged.get("show_prompts", False)),
+        with_thinking=bool(merged.get("with_thinking", False)),
     )
 
 
