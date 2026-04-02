@@ -12,6 +12,7 @@ from typing import Any
 
 import yaml
 
+from devpipe.engines import discover_available_engines, load_runner_runtime_config
 from devpipe.project_config import load_project_config
 from devpipe.runtime.state import STAGE_ORDER
 from devpipe.tags import load_available_tags, load_tag_definitions
@@ -303,19 +304,7 @@ def load_default_profile(project_root: Path | None = None) -> str:
 
     start = project_root if project_root is not None else Path.cwd()
     effective_root = find_project_root(start) or start
-    # Try local config first
-    config_path = effective_root / ".devpipe" / "config.yaml"
-    if config_path.exists():
-        data = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        profile = data.get("defaults", {}).get("profile", "")
-        if profile:
-            return profile
-    # Fallback to global config
-    global_config = Path.home() / ".devpipe" / "config.yaml"
-    if global_config.exists():
-        data = yaml.safe_load(global_config.read_text(encoding="utf-8")) or {}
-        return data.get("defaults", {}).get("profile", "")
-    return ""
+    return load_project_config(effective_root).default("profile", "")
 
 
 def prepare_initial_state(project_root: Path | None = None) -> dict[str, Any]:
@@ -458,6 +447,10 @@ def prepare_initial_state(project_root: Path | None = None) -> dict[str, Any]:
     # Load available tags for UI consumption
     available_tags_dict = load_available_tags(root)
     available_tags_list = sorted(available_tags_dict.keys())
+    runner_config = load_runner_runtime_config(project_root=root).get("runners", {})
+    available_runners = ["auto", *discover_available_engines(runner_config)]
+    if len(available_runners) == 1:
+        profile_errors.append("No available AI engines found. Install codex or claude.")
 
     # Compute routing graph if profile loaded
     routing_graph: dict[str, set[str]] = {}
@@ -478,6 +471,7 @@ def prepare_initial_state(project_root: Path | None = None) -> dict[str, Any]:
         "available_stages": stages,
         "fields": fields,
         "defaults": defaults,
+        "available_runners": available_runners,
         "available_tags": available_tags_list,
         "routing_graph": routing_graph,
         "profile_errors": profile_errors,

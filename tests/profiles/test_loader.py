@@ -10,6 +10,21 @@ from devpipe.profiles.loader import ProfileDefinition, load_profile, ProfileLoad
 from devpipe.runtime.state import PipelineState
 
 
+def write_agent(profile_dir: Path, name: str, output_name: str = "result") -> None:
+    """Create a minimal agent folder for loader tests."""
+    agent_dir = profile_dir / "agents" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "prompt.md").write_text(f"{name} prompt", encoding="utf-8")
+    (agent_dir / "output.schema.json").write_text(
+        (
+            '{"type":"object","properties":{"%s":{"type":"string"}},'
+            '"required":["%s"]}'
+        )
+        % (output_name, output_name),
+        encoding="utf-8",
+    )
+
+
 class TestProfileLoader:
     """Test profile loading from files."""
 
@@ -19,6 +34,7 @@ class TestProfileLoader:
         project_root.mkdir()
         profiles_dir = project_root / ".devpipe" / "profiles" / "myprofile"
         profiles_dir.mkdir(parents=True)
+        write_agent(profiles_dir, "developer", "code")
 
         pipeline_yml = profiles_dir / "pipeline.yml"
         pipeline_yml.write_text(
@@ -32,9 +48,12 @@ inputs:
     custom: true
 stages:
   developer:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: medium
     effort: middle
+    agent:
+      folder: developer
     out:
       code:
         type: string
@@ -59,6 +78,7 @@ routing:
         project_root.mkdir()
         profiles_dir = project_root / ".devpipe" / "profiles" / "yamlprofile"
         profiles_dir.mkdir(parents=True)
+        write_agent(profiles_dir, "echo", "output")
 
         pipeline_yaml = profiles_dir / "pipeline.yaml"
         pipeline_yaml.write_text(
@@ -72,9 +92,12 @@ inputs:
     custom: true
 stages:
   echo:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
+    agent:
+      folder: echo
     out:
       output:
         type: string
@@ -108,6 +131,7 @@ routing:
         project_root.mkdir()
         profiles_dir = project_root / ".devpipe" / "profiles" / "incomplete"
         profiles_dir.mkdir(parents=True)
+        write_agent(profiles_dir, "developer", "code")
 
         pipeline_yml = profiles_dir / "pipeline.yml"
         pipeline_yml.write_text(
@@ -121,9 +145,12 @@ inputs:
     custom: true
 stages:
   developer:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: medium
     effort: middle
+    agent:
+      folder: developer
     out:
       code:
         type: string
@@ -139,6 +166,7 @@ stages:
         project_root.mkdir()
         profiles_dir = project_root / ".devpipe" / "profiles" / "mismatch"
         profiles_dir.mkdir(parents=True)
+        write_agent(profiles_dir, "defined_stage")
 
         pipeline_yml = profiles_dir / "pipeline.yml"
         pipeline_yml.write_text(
@@ -152,9 +180,12 @@ inputs:
     custom: true
 stages:
   defined_stage:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: medium
     effort: middle
+    agent:
+      folder: defined_stage
     out:
       result:
         type: string
@@ -173,7 +204,7 @@ routing:
 
     def test_profile_definition_integration(self):
         """Test ProfileDefinition connects stages and routing properly."""
-        from devpipe.profiles.stages import ProfileStages
+        from devpipe.profiles.stages import AgentSpec, ProfileStages, StageSpec
         from devpipe.profiles.routing import RoutingSpec
 
         # Create minimal valid data
@@ -182,7 +213,23 @@ routing:
                 "task": {"type": "string", "default": "", "custom": True},
             },
             stages={
-                "dev": {"runner": "codex", "model": "medium", "effort": "middle", "out": {"code": {"type": "string"}}},
+                "dev": StageSpec(
+                    name="dev",
+                    type="ai",
+                    default_engine="codex",
+                    model="middle",
+                    effort="middle",
+                    agent=AgentSpec(
+                        folder="dev",
+                        prompt_content="dev prompt",
+                        schema_content={
+                            "type": "object",
+                            "properties": {"code": {"type": "string"}},
+                            "required": ["code"],
+                        },
+                    ),
+                    out={"code": {"type": "string"}},
+                ),
             },
         )
 

@@ -2,11 +2,25 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import devpipe.app as app_module
 import devpipe.history as history_module
 import pytest
 from devpipe.app import OrchestratorApp, RunConfig
 from devpipe.profiles.agent import TaskResult
+
+
+def write_agent(profile_dir: Path, name: str, output_name: str) -> None:
+    """Create a minimal agent folder for orchestrator tests."""
+    agent_dir = profile_dir / "agents" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "prompt.md").write_text(f"{name} prompt", encoding="utf-8")
+    (agent_dir / "output.schema.json").write_text(
+        (
+            '{"type":"object","properties":{"%s":{"type":"string"}},'
+            '"required":["%s"]}'
+        )
+        % (output_name, output_name),
+        encoding="utf-8",
+    )
 
 
 class FakeRunner:
@@ -56,7 +70,12 @@ def test_orchestrator_uses_conditional_routing_rules(tmp_path: Path, monkeypatch
     profile_dir = tmp_path / ".devpipe" / "profiles" / "branchy"
     profile_dir.mkdir(parents=True)
     (tmp_path / ".devpipe" / "runs").mkdir(parents=True)
-    monkeypatch.setattr(history_module, "save_run_history", lambda entry, runs_dir: None)
+    write_agent(profile_dir, "start", "seed")
+    write_agent(profile_dir, "decide", "go_refine")
+    write_agent(profile_dir, "refine", "refined")
+    write_agent(profile_dir, "finalize", "final")
+    monkeypatch.setattr(history_module, "save_run_replay_config", lambda run_id, entry, runs_dir: None)
+    monkeypatch.setattr(history_module, "save_run_details", lambda entry, runs_dir: None)
 
     (profile_dir / "pipeline.yml").write_text(
         """
@@ -69,30 +88,42 @@ inputs:
     custom: true
 stages:
   start:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
+    agent:
+      folder: start
     out:
       seed:
         type: string
   decide:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
+    agent:
+      folder: decide
     out:
       go_refine:
         type: bool
   refine:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
+    agent:
+      folder: refine
     out:
       refined:
         type: string
   finalize:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
+    agent:
+      folder: finalize
     out:
       final:
         type: string
@@ -158,10 +189,151 @@ routing:
     assert stage_outputs["refine"]["refined"] == "sharper idea"
 
 
+def test_orchestrator_runs_cmd_stage_and_routes_on_output(tmp_path: Path, monkeypatch) -> None:
+    profile_dir = tmp_path / ".devpipe" / "profiles" / "cmd-branchy"
+    profile_dir.mkdir(parents=True)
+    (tmp_path / ".devpipe" / "runs").mkdir(parents=True)
+    write_agent(profile_dir, "finalize", "final")
+    monkeypatch.setattr(history_module, "save_run_replay_config", lambda run_id, entry, runs_dir: None)
+    monkeypatch.setattr(history_module, "save_run_details", lambda entry, runs_dir: None)
+
+    (profile_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: cmd-branchy
+inputs:
+  task:
+    type: string
+    default: ""
+    custom: true
+stages:
+  decide:
+    type: cmd
+    command:
+      exec: ["/bin/sh", "-c", "printf '{\\"go_refine\\": false}'"]
+      parse: json
+      result:
+        mode: schema
+        source: stdout
+    out:
+      go_refine:
+        type: bool
+  finalize:
+    type: ai
+    default_engine: codex
+    model: low
+    effort: low
+    agent:
+      folder: finalize
+    out:
+      final:
+        type: string
+routing:
+  start_stage: decide
+  by_stage:
+    decide:
+      next_stages:
+        - stage: finalize
+          all:
+            - field: out.go_refine
+              op: eq
+              value: false
+        - stage: failed
+          default: true
+    finalize:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runner = FakeRunner({"finalize": {"final": "done"}})
+    app = OrchestratorApp(
+        runners={"codex": runner},
+        runs_dir=tmp_path / "runs",
+        project_root=tmp_path,
+        runner_profiles=_runner_profiles(),
+    )
+
+    state = app.run(
+        RunConfig(
+            profile="cmd-branchy",
+            task="Test cmd branching",
+            runner="auto",
+        )
+    )
+
+    assert state.status == "completed"
+    assert state.artifacts["stage_outputs"]["decide"]["go_refine"] is False
+    assert state.artifacts["stage_outputs"]["finalize"]["final"] == "done"
+
+
+def test_orchestrator_auto_runner_falls_back_when_stage_default_missing(tmp_path: Path, monkeypatch) -> None:
+    profile_dir = tmp_path / ".devpipe" / "profiles" / "auto-fallback"
+    profile_dir.mkdir(parents=True)
+    (tmp_path / ".devpipe" / "runs").mkdir(parents=True)
+    write_agent(profile_dir, "write", "result")
+    monkeypatch.setattr(history_module, "save_run_replay_config", lambda run_id, entry, runs_dir: None)
+    monkeypatch.setattr(history_module, "save_run_details", lambda entry, runs_dir: None)
+
+    (profile_dir / "pipeline.yml").write_text(
+        """
+version: 1
+name: auto-fallback
+inputs:
+  task:
+    type: string
+    default: ""
+    custom: true
+stages:
+  write:
+    type: ai
+    default_engine: claude
+    model: low
+    effort: low
+    agent:
+      folder: write
+    out:
+      result:
+        type: string
+routing:
+  start_stage: write
+  by_stage:
+    write:
+      next_stages:
+        - stage: completed
+          default: true
+""".strip(),
+        encoding="utf-8",
+    )
+
+    runner = FakeRunner({"write": {"result": "done"}})
+    app = OrchestratorApp(
+        runners={"codex": runner},
+        runs_dir=tmp_path / "runs",
+        project_root=tmp_path,
+        runner_profiles=_runner_profiles(),
+    )
+
+    state = app.run(
+        RunConfig(
+            profile="auto-fallback",
+            task="Fallback test",
+            runner="auto",
+        )
+    )
+
+    assert state.status == "completed"
+    assert state.selected_runner == "codex"
+
+
 def test_orchestrator_writes_stage_failure_debug_log(tmp_path: Path, monkeypatch) -> None:
     profile_dir = tmp_path / ".devpipe" / "profiles" / "broken"
     profile_dir.mkdir(parents=True)
-    monkeypatch.setattr(history_module, "save_run_history", lambda entry, runs_dir: None)
+    write_agent(profile_dir, "intake", "result")
+    monkeypatch.setattr(history_module, "save_run_replay_config", lambda run_id, entry, runs_dir: None)
+    monkeypatch.setattr(history_module, "save_run_details", lambda entry, runs_dir: None)
 
     (profile_dir / "pipeline.yml").write_text(
         """
@@ -174,9 +346,12 @@ inputs:
     custom: true
 stages:
   intake:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
+    agent:
+      folder: intake
     out:
       result:
         type: string

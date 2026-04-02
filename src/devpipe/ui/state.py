@@ -69,7 +69,7 @@ class FormState:
     fields: list[FieldMeta] = field(default_factory=list)
     profile: str = ""
     available_profiles: list[str] = field(default_factory=list)
-    available_runners: list[str] = field(default_factory=lambda: ["codex", "claude", "auto"])
+    available_runners: list[str] = field(default_factory=lambda: ["auto"])
     available_models: list[str] = field(default_factory=lambda: ["auto", "low", "middle", "high"])
     available_efforts: list[str] = field(default_factory=lambda: ["auto", "low", "middle", "high", "extra"])
     available_stages: list[str] = field(default_factory=list)

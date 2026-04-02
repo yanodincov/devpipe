@@ -45,6 +45,7 @@ def _loaded_state() -> UIState:
         available_stages=["architect", "developer", "qa_local"],
         fields=_sample_fields(),
         defaults={"task": "Do something", "runner": "auto"},
+        available_runners=["auto", "codex", "claude"],
     )
 
 

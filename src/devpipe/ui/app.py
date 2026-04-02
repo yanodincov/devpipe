@@ -101,6 +101,7 @@ class DevpipeTextualApp(App):
             available_stages=data["available_stages"],
             fields=data["fields"],
             defaults=data["defaults"],
+            available_runners=data.get("available_runners", ["auto"]),
             available_tags=data.get("available_tags", []),
             profile_errors=data.get("profile_errors", []),
             routing_graph=data.get("routing_graph", {}),
@@ -209,6 +210,7 @@ class DevpipeTextualApp(App):
                 available_stages=data["available_stages"],
                 fields=data["fields"],
                 defaults=defaults,
+                available_runners=data.get("available_runners", self._ui_state.form.available_runners),
                 available_tags=data.get("available_tags", []),
                 profile_errors=[],  # Legacy mode has no profile errors
                 routing_graph=self._ui_state.form.routing_graph,
@@ -281,6 +283,7 @@ class DevpipeTextualApp(App):
                 available_stages=stages,
                 fields=new_fields,
                 defaults=defaults,
+                available_runners=form.available_runners,
                 available_tags=form.available_tags,
                 profile_errors=self._ui_state.form.profile_errors,
                 routing_graph=self._ui_state.form.routing_graph,

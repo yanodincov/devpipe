@@ -7,20 +7,22 @@ import threading
 
 from devpipe.profiles.agent import build_stage_envelope
 from devpipe.profiles.loader import ProfileDefinition, load_profile
+from devpipe.profiles.stages import StageType
 from devpipe.runtime.engine import PipelineEngine
 from devpipe.runtime.events import Event, EventType
 from devpipe.runtime.retry import RetryPolicy
 from devpipe.runtime.state import PipelineState
-from devpipe.runners.claude import ClaudeRunner
-from devpipe.runners.codex import CodexRunner
-from devpipe.runners.profile_map import (
-    RunnerProfiles,
-    load_runner_profiles,
-    resolve_effort,
-    resolve_model,
+from devpipe.engines import (
+    discover_available_engines,
+    load_runner_runtime_config,
+    load_runtime_runner_profiles,
+    resolve_engine_choice,
 )
+from devpipe.runners.claude import ClaudeRunner
+from devpipe.runners.command import CommandRunner
+from devpipe.runners.codex import CodexRunner
+from devpipe.runners.profile_map import RunnerProfiles, resolve_effort, resolve_model
 from devpipe.storage.artifact_store import ArtifactStore
-from devpipe.storage.config_store import ConfigStore
 from devpipe.storage.run_logger import RunLogger
 
 
@@ -166,6 +168,7 @@ class OrchestratorApp:
         self.project_root = Path(project_root) if project_root is not None else None
         self.runner_profiles = runner_profiles or {}
         self._cancel_requested = threading.Event()
+        self.command_runner = CommandRunner()
 
     def run(
         self,
@@ -174,7 +177,7 @@ class OrchestratorApp:
         on_stage_complete: "Callable[[str, dict], None] | None" = None,
     ) -> PipelineState:
         from datetime import datetime, timezone
-        from devpipe.history import RunHistoryEntry, StageRun, save_run_history
+        from devpipe.history import RunDetailsEntry, RunReplayConfig, StageRun, save_run_details, save_run_replay_config
         from devpipe.profiles.loader import get_stage_order_from_routing
 
         self._cancel_requested.clear()
@@ -209,11 +212,11 @@ class OrchestratorApp:
 
         # Determine first and last stages
         first_stage = config.first_role if config.first_role else profile.routing.start_stage
-        last_stage = config.last_role if config.last_role else stage_order[-1]
+        last_stage = config.last_role if config.last_role else None
 
         if first_stage not in profile.stages:
             raise ValueError(f"Unknown first_role: {first_stage}")
-        if last_stage not in profile.stages:
+        if last_stage is not None and last_stage not in profile.stages:
             raise ValueError(f"Unknown last_role: {last_stage}")
 
         # Compute engine's first_stage and get_next_stage functions
@@ -221,7 +224,7 @@ class OrchestratorApp:
             return first_stage
 
         def get_next(current: str) -> str:
-            if current == last_stage:
+            if last_stage is not None and current == last_stage:
                 return "completed"
             return next_stage_map.get(current, "completed")
 
@@ -286,17 +289,6 @@ class OrchestratorApp:
                     }
                 stage_entry = stage_runs[stage_name]
 
-                # Determine runner and model/effort
-                actual_runner_name = stage_spec.runner if config.runner == "auto" else config.runner
-                runner = self.runners[actual_runner_name]
-                state.selected_runner = actual_runner_name
-                model_level = stage_spec.model if config.model in {None, "", "auto"} else config.model
-                effort_level = stage_spec.effort if config.effort in {None, "", "auto"} else config.effort
-                resolved_model = resolve_model(self.runner_profiles, actual_runner_name, model_level)
-                resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
-                runner.model_name = resolved_model
-                runner.effort = resolved_effort
-
                 # Build context
                 stage_context: dict[str, object] = {"config": config.__dict__}
                 if state.current_stage == "release":
@@ -327,22 +319,46 @@ class OrchestratorApp:
                     else:
                         user_tags_for_stage = list(config.tags)
 
-                # Build envelope using stage agent
-                envelope = build_stage_envelope(
-                    stage_spec,
-                    state,
-                    model_name=resolved_model,
-                    effort=resolved_effort,
-                    extra_context=stage_context,
-                    project_root=self.project_root,
-                    tags=user_tags_for_stage,  # only user tags filtered by roles; stage_spec.tags handled inside
-                )
+                if stage_spec.type == StageType.AI:
+                    actual_runner_name = resolve_engine_choice(
+                        requested_runner=config.runner,
+                        stage_default_engine=stage_spec.default_engine or "",
+                        available_engines=list(self.runners.keys()),
+                    )
+                    runner = self.runners[actual_runner_name]
+                    state.selected_runner = actual_runner_name
+                    model_level = stage_spec.model if config.model in {None, "", "auto"} else config.model
+                    effort_level = stage_spec.effort if config.effort in {None, "", "auto"} else config.effort
+                    resolved_model = resolve_model(self.runner_profiles, actual_runner_name, model_level)
+                    resolved_effort = resolve_effort(self.runner_profiles, actual_runner_name, effort_level)
+                    runner.model_name = resolved_model
+                    runner.effort = resolved_effort
+                    envelope = build_stage_envelope(
+                        stage_spec,
+                        state,
+                        model_name=resolved_model,
+                        effort=resolved_effort,
+                        extra_context=stage_context,
+                        project_root=self.project_root,
+                        tags=user_tags_for_stage,  # only user tags filtered by roles; stage_spec.tags handled inside
+                    )
+                else:
+                    actual_runner_name = "cmd"
+                    runner = self.command_runner
+                    state.selected_runner = actual_runner_name
+                    resolved_model = ""
+                    resolved_effort = ""
+                    envelope = None
+
                 if on_stage_start is not None:
                     on_stage_start(state.current_stage, actual_runner_name, resolved_model, resolved_effort)
 
                 attempt_start = datetime.now(timezone.utc)
                 try:
-                    result = runner.run(envelope)
+                    if stage_spec.type == StageType.AI:
+                        result = runner.run(envelope)
+                    else:
+                        result = runner.run(stage_spec, project_root=self.project_root)
                 except Exception as exc:
                     attempt_end = datetime.now(timezone.utc)
                     stage_entry["attempts"].append({
@@ -361,7 +377,7 @@ class OrchestratorApp:
                             "error": str(exc),
                             "config": config.__dict__,
                             "context": stage_context,
-                            "output_schema": envelope.output_schema,
+                            "output_schema": envelope.output_schema if envelope is not None else {},
                         },
                     )
                     if self._cancel_requested.is_set():
@@ -405,7 +421,7 @@ class OrchestratorApp:
                 if on_stage_complete is not None:
                     on_stage_complete(stage_spec.name, result.structured_output, tokens=result.tokens)
 
-                if stage_spec.name == last_stage:
+                if last_stage is not None and stage_spec.name == last_stage:
                     next_stage = "completed"
                 else:
                     next_stage = _resolve_next_stage_from_rules(
@@ -426,7 +442,7 @@ class OrchestratorApp:
                 state = engine.apply(state, success)
                 logger.write_summary(state)
 
-                if stage_spec.name == last_stage and state.status not in {"completed", "failed"}:
+                if last_stage is not None and stage_spec.name == last_stage and state.status not in {"completed", "failed"}:
                     state.status = "completed"
                     state.current_stage = "completed"
                     logger.write_summary(state)
@@ -468,16 +484,19 @@ class OrchestratorApp:
                 for s in ordered_stage_dicts
             ]
 
-            entry = RunHistoryEntry(
-                run_id=run_id,
-                timestamp=run_start_time,
+            replay_entry = RunReplayConfig(
                 profile=config.profile,
                 config=config.__dict__,
+            )
+            details_entry = RunDetailsEntry(
+                run_id=run_id,
+                timestamp=run_start_time,
                 stages=stage_run_objects,
                 summary=summary,
             )
             history_dir = self.project_root / ".devpipe" / "history"
-            save_run_history(entry, history_dir)
+            save_run_replay_config(run_id, replay_entry, history_dir)
+            save_run_details(details_entry, history_dir)
 
         return state
 
@@ -490,30 +509,32 @@ class OrchestratorApp:
 
 
 def build_default_app(base_dir: str | Path, show_prompt: bool = False) -> OrchestratorApp:
-    base = Path(base_dir)
-    config_store = ConfigStore(base / "config" / "runners.yaml")
-    raw_config = config_store.load()
+    del base_dir
+    project_root = Path.cwd()
+    raw_config = load_runner_runtime_config(project_root=project_root)
     runner_config = raw_config.get("runners", {})
-    runner_profiles = load_runner_profiles(raw_config)
+    runner_profiles = load_runtime_runner_profiles(project_root=project_root)
+    available_engines = discover_available_engines(runner_config)
+    runners: dict[str, object] = {}
 
     codex_config = runner_config.get("codex", {})
-    claude_config = runner_config.get("claude", {})
-    runners = {
-        "codex": CodexRunner(
+    if "codex" in available_engines:
+        runners["codex"] = CodexRunner(
             command=codex_config.get("command", ["codex"]),
             timeout=int(codex_config.get("timeout", 300)),
             show_prompt=show_prompt,
-        ),
-        "claude": ClaudeRunner(
+        )
+    claude_config = runner_config.get("claude", {})
+    if "claude" in available_engines:
+        runners["claude"] = ClaudeRunner(
             command=claude_config.get("command", ["claude"]),
             timeout=int(claude_config.get("timeout", 300)),
             show_prompt=show_prompt,
-        ),
-    }
+        )
 
     return OrchestratorApp(
         runners=runners,
-        runs_dir=base / "runs",
-        project_root=Path.cwd(),
+        runs_dir=project_root / ".devpipe" / "runs",
+        project_root=project_root,
         runner_profiles=runner_profiles,
     )

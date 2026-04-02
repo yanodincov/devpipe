@@ -402,7 +402,7 @@ def run_tui(base_dir: Path) -> RunConfig | None:
         choices: list = [
             _c("Set task",          "What needs to be done — the main prompt for the AI agent"),
             _c("Set task ID",       "Jira ticket ID (e.g. MRC-123); leave empty to skip Jira context"),
-            _c("Set runner",        "AI runner: codex, claude, or auto (take runner from each role)"),
+            _c("Set runner",        "Run-level backend override: codex, claude, or auto (use each stage default_engine)"),
             _c("Set target branch", "Deploy stand branch; if empty — pipeline stops at qa_local"),
             _c("Set service",       "Service name passed only to the release stage"),
             _c("Set namespace",     "Kubernetes namespace passed explicitly to the release stage"),
