@@ -5,6 +5,16 @@ from devpipe.ui.services import prepare_initial_state, resolve_legacy_form_state
 from devpipe.ui.state import FieldKind
 
 
+def write_agent(profile_dir, name: str) -> None:
+    agent_dir = profile_dir / "agents" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "prompt.md").write_text(f"{name} prompt", encoding="utf-8")
+    (agent_dir / "output.schema.json").write_text(
+        '{"type":"object","properties":{"response":{"type":"string"},"result":{"type":"string"}},"required":["result"]}',
+        encoding="utf-8",
+    )
+
+
 def test_prepare_initial_state_without_profiles_returns_empty(tmp_path):
     """Test that without .devpipe/profiles/, state has no profile or stages."""
     devpipe_dir = tmp_path / ".devpipe"
@@ -138,6 +148,7 @@ def test_profile_with_reserved_input_name_shows_error(tmp_path):
     devpipe_dir = tmp_path / ".devpipe"
     profiles_dir = devpipe_dir / "profiles" / "bad-profile"
     profiles_dir.mkdir(parents=True)
+    write_agent(profiles_dir, "echo")
     
     # Profile with reserved input name 'runner' - need valid stages
     (profiles_dir / "pipeline.yml").write_text(
@@ -150,7 +161,10 @@ inputs:
     default: ""
 stages:
   echo:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: echo
     in:
       msg: input.runner
     out:
@@ -197,7 +211,8 @@ inputs:
     type: string
 stages:
   echo:
-    runner: codex
+    type: ai
+    default_engine: codex
     # Missing required 'out' field
 routing:
   start_stage: echo
@@ -228,6 +243,7 @@ def test_profile_missing_routing_shows_error(tmp_path):
     devpipe_dir = tmp_path / ".devpipe"
     profiles_dir = devpipe_dir / "profiles" / "incomplete-profile"
     profiles_dir.mkdir(parents=True)
+    write_agent(profiles_dir, "echo")
     
     # Missing routing section
     (profiles_dir / "pipeline.yml").write_text(
@@ -239,7 +255,10 @@ inputs:
     type: string
 stages:
   echo:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: echo
     in:
       msg: input.message
     out:
@@ -268,6 +287,7 @@ def test_profile_without_declared_tags_gets_standard_tags_field(tmp_path):
     profiles_dir = devpipe_dir / "profiles" / "plain-profile"
     profiles_dir.mkdir(parents=True)
     (devpipe_dir / "tags" / "go" / "review").mkdir(parents=True)
+    write_agent(profiles_dir, "review")
 
     (profiles_dir / "pipeline.yml").write_text(
         """
@@ -281,7 +301,10 @@ inputs:
     default: ""
 stages:
   review:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: review
     out:
       result:
         type: string
@@ -314,6 +337,7 @@ def test_profile_without_declared_tags_keeps_profile_inputs_as_custom(tmp_path):
     profiles_dir = devpipe_dir / "profiles" / "plain-profile"
     profiles_dir.mkdir(parents=True)
     (devpipe_dir / "tags" / "go" / "review").mkdir(parents=True)
+    write_agent(profiles_dir, "review")
 
     (profiles_dir / "pipeline.yml").write_text(
         """
@@ -328,7 +352,10 @@ inputs:
     custom: true
 stages:
   review:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: review
     out:
       result:
         type: string

@@ -198,6 +198,7 @@ def test_history_preview_matches_form_snapshot_layout() -> None:
 def test_history_preview_shows_empty_custom_fields_from_profile(tmp_path) -> None:
     profile_dir = tmp_path / ".devpipe" / "profiles" / "idea-lab"
     profile_dir.mkdir(parents=True)
+    write_agent(profile_dir, "review")
     (profile_dir / "pipeline.yml").write_text(
         """
 version: 1
@@ -213,7 +214,10 @@ inputs:
     default: []
 stages:
   review:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: review
     out:
       result:
         type: string
@@ -268,3 +272,12 @@ def test_history_screen_reads_entries_from_history_dir(tmp_path, monkeypatch) ->
     screen.on_mount()
 
     assert captured["path"] == tmp_path / ".devpipe" / "history"
+def write_agent(profile_dir: Path, name: str) -> None:
+    agent_dir = profile_dir / "agents" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "prompt.md").write_text(f"{name} prompt", encoding="utf-8")
+    (agent_dir / "output.schema.json").write_text(
+        '{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}',
+        encoding="utf-8",
+    )
+

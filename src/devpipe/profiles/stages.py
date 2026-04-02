@@ -16,6 +16,61 @@ class InputType(str, Enum):
     ARRAY = "array"
 
 
+class StageType(str, Enum):
+    """Supported stage kinds."""
+    AI = "ai"
+    CMD = "cmd"
+
+
+class CommandParseMode(str, Enum):
+    """Supported command output parsing modes."""
+    TEXT = "text"
+    JSON = "json"
+
+
+class CommandResultMode(str, Enum):
+    """Supported command result shaping modes."""
+    RAW = "raw"
+    SCHEMA = "schema"
+
+
+class CommandResultSpec(BaseModel):
+    """Command result extraction settings."""
+    mode: CommandResultMode = CommandResultMode.RAW
+    source: str = "stdout"
+
+    @field_validator("source")
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        if v not in {"stdout", "stderr"}:
+            raise ValueError("source must be stdout or stderr")
+        return v
+
+
+class CommandSpec(BaseModel):
+    """Command execution settings for cmd stages."""
+    exec: list[str]
+    cwd: str | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    timeout: int | None = None
+    parse: CommandParseMode = CommandParseMode.TEXT
+    result: CommandResultSpec = Field(default_factory=CommandResultSpec)
+
+    @field_validator("exec")
+    @classmethod
+    def validate_exec(cls, v: list[str]) -> list[str]:
+        if not v or not all(isinstance(part, str) and part for part in v):
+            raise ValueError("exec must be a non-empty list of strings")
+        return v
+
+    @field_validator("timeout")
+    @classmethod
+    def validate_timeout(cls, v: int | None) -> int | None:
+        if v is not None and v <= 0:
+            raise ValueError("timeout must be > 0")
+        return v
+
+
 def _parse_inputs_soft(inputs_data: dict[str, Any]) -> tuple[dict[str, "InputSpec"], list[str]]:
     """Parse inputs with error collection instead of failing.
     
@@ -180,14 +235,16 @@ class StageSpec(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     name: str
-    runner: str = "codex"
-    model: str = "middle"
-    effort: str = "middle"
+    type: StageType
+    default_engine: str | None = None
+    model: str | None = None
+    effort: str | None = None
     in_: StageInBinding | None = Field(default=None, alias="in")
     out: StageOutField
     retry_limit: int = 1
     tags: list[str] = Field(default_factory=list)
     agent: AgentSpec | None = None
+    command: CommandSpec | None = None
 
     @field_validator("name")
     @classmethod
@@ -197,15 +254,9 @@ class StageSpec(BaseModel):
             raise ValueError("stage name must be a valid Python identifier")
         return v
 
-    @field_validator("runner")
-    @classmethod
-    def validate_runner(cls, v: str) -> str:
-        """Accept any runner value - validation happens in validator module."""
-        return v
-
     @field_validator("model", mode="before")
     @classmethod
-    def normalize_model(cls, v: Any) -> str:
+    def normalize_model(cls, v: Any) -> Any:
         """Accept 'medium' as alias for 'middle'."""
         if v == "medium":
             return "middle"
@@ -213,7 +264,7 @@ class StageSpec(BaseModel):
 
     @field_validator("effort", mode="before")
     @classmethod
-    def normalize_effort(cls, v: Any) -> str:
+    def normalize_effort(cls, v: Any) -> Any:
         """Accept 'medium' as alias for 'middle'."""
         if v == "medium":
             return "middle"
@@ -221,8 +272,10 @@ class StageSpec(BaseModel):
 
     @field_validator("model")
     @classmethod
-    def validate_model(cls, v: str) -> str:
+    def validate_model(cls, v: str | None) -> str | None:
         """Validate model level."""
+        if v is None:
+            return v
         allowed = {"low", "middle", "high", "auto"}
         if v not in allowed:
             raise ValueError(f"model must be one of: {', '.join(allowed)}")
@@ -230,8 +283,10 @@ class StageSpec(BaseModel):
 
     @field_validator("effort")
     @classmethod
-    def validate_effort(cls, v: str) -> str:
+    def validate_effort(cls, v: str | None) -> str | None:
         """Validate effort level."""
+        if v is None:
+            return v
         allowed = {"low", "middle", "high", "auto"}
         if v not in allowed:
             raise ValueError(f"effort must be one of: {', '.join(allowed)}")
@@ -242,6 +297,34 @@ class StageSpec(BaseModel):
         """Validate retry limit is positive."""
         if self.retry_limit < 1:
             raise ValueError("retry_limit must be >= 1")
+        return self
+
+    @model_validator(mode="after")
+    def validate_type_specific_fields(self) -> StageSpec:
+        """Validate fields allowed for ai and cmd stages."""
+        if self.type == StageType.AI:
+            if self.agent is None:
+                raise ValueError("ai stage must define agent")
+            if self.command is not None:
+                raise ValueError("ai stage must not define command")
+            if not self.default_engine:
+                raise ValueError("ai stage must define default_engine")
+            if self.model is None:
+                self.model = "middle"
+            if self.effort is None:
+                self.effort = "middle"
+            return self
+
+        if self.command is None:
+            raise ValueError("cmd stage must define command")
+        if self.agent is not None:
+            raise ValueError("cmd stage must not define agent")
+        if self.default_engine is not None:
+            raise ValueError("cmd stage must not define default_engine")
+        if self.model is not None:
+            raise ValueError("cmd stage must not define model")
+        if self.effort is not None:
+            raise ValueError("cmd stage must not define effort")
         return self
 
     @field_validator("out", mode="before")

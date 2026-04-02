@@ -14,6 +14,16 @@ from devpipe.ui.run_session import sanitize_output_text
 from devpipe.ui.state import FieldKind, FieldMeta, UIState
 
 
+def write_agent(profile_dir, name: str) -> None:
+    agent_dir = profile_dir / "agents" / name
+    agent_dir.mkdir(parents=True)
+    (agent_dir / "prompt.md").write_text(f"{name} prompt", encoding="utf-8")
+    (agent_dir / "output.schema.json").write_text(
+        '{"type":"object","properties":{"result":{"type":"string"}},"required":["result"]}',
+        encoding="utf-8",
+    )
+
+
 def test_build_run_config_collects_custom_fields_and_overrides(tmp_path):
     app = DevpipeTextualApp(project_root=tmp_path)
     state = load_defaults(
@@ -265,6 +275,8 @@ def test_profile_change_resets_tags_and_uses_new_profile_agents(tmp_path):
         encoding="utf-8",
     )
 
+    write_agent(profile_a_dir, "architect")
+    write_agent(profile_a_dir, "developer")
     (profile_a_dir / "pipeline.yml").write_text(
         """
 version: 1
@@ -277,12 +289,18 @@ inputs:
     default: ""
 stages:
   architect:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: architect
     out:
       result:
         type: string
   developer:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: developer
     out:
       result:
         type: string
@@ -300,6 +318,8 @@ routing:
 """.strip(),
         encoding="utf-8",
     )
+    write_agent(profile_b_dir, "review")
+    write_agent(profile_b_dir, "verify")
     (profile_b_dir / "pipeline.yml").write_text(
         """
 version: 1
@@ -312,12 +332,18 @@ inputs:
     default: ""
 stages:
   review:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: review
     out:
       result:
         type: string
   verify:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: verify
     out:
       result:
         type: string
@@ -363,6 +389,7 @@ def test_restore_history_entry_switches_to_entry_profile(tmp_path):
     profile_a_dir.mkdir(parents=True)
     profile_b_dir.mkdir(parents=True)
 
+    write_agent(profile_a_dir, "review")
     (profile_a_dir / "pipeline.yml").write_text(
         """
 version: 1
@@ -376,7 +403,10 @@ inputs:
     custom: true
 stages:
   review:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: review
     out:
       result:
         type: string
@@ -390,6 +420,7 @@ routing:
 """.strip(),
         encoding="utf-8",
     )
+    write_agent(profile_b_dir, "review")
     (profile_b_dir / "pipeline.yml").write_text(
         """
 version: 1
@@ -403,7 +434,10 @@ inputs:
     custom: true
 stages:
   review:
-    runner: codex
+    type: ai
+    default_engine: codex
+    agent:
+      folder: review
     out:
       result:
         type: string

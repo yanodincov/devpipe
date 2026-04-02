@@ -25,11 +25,63 @@ python3 -m venv .venv && .venv/bin/pip install -e '.[dev]'
 ## Запуск
 
 ```bash
-devpipe          # интерактивное TUI — основной и единственный режим
-mise run         # то же самое, если настроен mise
+devpipe                    # интерактивное TUI
+devpipe validate           # валидация профилей
+devpipe exec --profile=... --task=...   # неинтерактивный запуск
+mise run                   # интерактивное TUI, если настроен mise
 ```
 
 **Примечание:** devpipe можно запускать в любой директории. При отсутствии локальной конфигурации `.devpipe/` в проекте, приложение будет использовать глобальные профили из `~/.devpipe/profiles/`.
+
+### Неинтерактивный режим
+
+Есть два явных способа запуска `devpipe exec`:
+
+1. Через replay-конфиг:
+
+```bash
+devpipe exec --pipe-file=release.devpipe.yaml
+```
+
+2. Полностью через флаги:
+
+```bash
+devpipe exec \
+  --profile=delivery \
+  --task="prepare release notes" \
+  --runner=codex \
+  --model=middle \
+  --effort=middle \
+  --tags=release,docs \
+  --start-agent=intake \
+  --stop-agent=finalize \
+  --topic="release notes" \
+  --show-prompts \
+  --output=json
+```
+
+Допустим и смешанный режим:
+- `--pipe-file` загружает базовый replay-конфиг
+- прямые флаги переопределяют значения из файла
+
+Если `--pipe-file` не указан, все параметры нужно передать через флаги.
+
+```bash
+devpipe exec \
+  --pipe-file=release.devpipe.yaml \
+  --runner=codex \
+  --task="prepare release notes" \
+  --start-agent=intake \
+  --stop-agent=finalize \
+  --topic="release notes" \
+  --show-prompts \
+  --output=json
+```
+
+- `--pipe-file` загружает replay-конфиг из `.devpipe.yaml`
+- `--output=default` печатает человекочитаемый лог
+- `--output=json` возвращает machine-readable ответ с `run_id`, `status`, `final`, `summary`
+- `--show-prompts` включает печать промптов/structured prompt events в non-interactive запуске
 
 ### Глобальные профили
 
@@ -147,7 +199,8 @@ inputs:
 ```yaml
 stages:
   developer:
-    runner: codex
+    type: ai
+    default_engine: codex
     tags: [go, backend]   # теги, применяемые к этой стадии
     agent:
       folder: developer
@@ -302,7 +355,8 @@ inputs:
 
 stages:
   build:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: high
     effort: middle
     retry_limit: 2
@@ -429,25 +483,28 @@ dry_run:
 
 ### stages
 
-Определяет стадии выполнения пайплайна. Каждая стадия — это запуск AI-агента с определённым промптом.
+Определяет стадии выполнения пайплайна. Стадия может быть двух типов:
+
+- `type: ai` — запуск AI-агента с промптом и JSON schema
+- `type: cmd` — выполнение локальной команды без обращения к ИИ
+
+Для `ai` стадии используется `default_engine`, а не `runner`. Поле `runner` остается только на уровне запуска пайплайна и `defaults`.
 
 ```yaml
 stages:
   <stage_name>:
-    runner: codex            # раннер (auto, codex, claude)
-    model: high              # модель (auto, low, middle, medium, high)
-    effort: middle           # усилия (auto, low, middle, medium, high)
-    retry_limit: 2           # лимит повторных попыток (>= 0, целое число)
-    tags: [go, backend]      # теги для правил (опционально)
-    agent:                   # спецификация агента
-      folder: builder        # имя папки в agents/ (опционально)
-      # ИЛИ
-      prompt: path/to/prompt.md
-      schema: path/to/schema.json
-    in:                      # входные данные
+    type: ai
+    default_engine: codex    # ai backend по умолчанию: codex | claude
+    model: high
+    effort: middle
+    retry_limit: 2
+    tags: [go, backend]
+    agent:
+      folder: builder
+    in:
       task: input.task
       artifacts: stage.build.out.artifacts
-    out:                     # выходные данные
+    out:
       result:
         type: object
 ```
@@ -456,14 +513,35 @@ stages:
 
 | Поле | Тип | Обязательное | Описание |
 |------|-----|--------------|----------|
-| `runner` | string | да | Раннер: `auto`, `codex`, `claude` |
-| `model` | string | нет | Модель: `auto`, `low`, `middle`, `medium`, `high` |
-| `effort` | string | нет | Усилия: `auto`, `low`, `middle`, `medium`, `high` |
+| `type` | string | да | Тип стадии: `ai` или `cmd` |
+| `default_engine` | string | для `ai` | AI backend по умолчанию: `codex`, `claude` |
+| `model` | string | для `ai` | Модель: `auto`, `low`, `middle`, `medium`, `high` |
+| `effort` | string | для `ai` | Усилия: `auto`, `low`, `middle`, `medium`, `high` |
 | `retry_limit` | int | нет | Лимит повторов (>= 0, целое). По умолчанию 1 |
 | `tags` | list | нет | Список тегов для правил |
-| `agent` | object | нет | Спецификация агента (см. ниже) |
+| `agent` | object | для `ai` | Спецификация агента (см. ниже) |
+| `command` | object | для `cmd` | Конфиг выполнения команды |
 | `in` | dict | нет | Входные привязки |
 | `out` | dict | нет | Выходные поля |
+
+#### Пример `cmd` стадии
+
+```yaml
+stages:
+  git_meta:
+    type: cmd
+    command:
+      exec: ["git", "status", "--short", "--branch"]
+      parse: text
+      result:
+        mode: raw
+        source: stdout
+    out:
+      summary:
+        type: string
+      stdout:
+        type: string
+```
 
 #### Спецификация агента (agent)
 

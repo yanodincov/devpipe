@@ -4,7 +4,19 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from devpipe.profiles.stages import InputSpec, StageSpec, ProfileStages
+from devpipe.profiles.stages import AgentSpec, InputSpec, ProfileStages, StageSpec
+
+
+def make_agent(output_name: str = "result") -> AgentSpec:
+    return AgentSpec(
+        folder="agent",
+        prompt_content="prompt",
+        schema_content={
+            "type": "object",
+            "properties": {output_name: {"type": "string"}},
+            "required": [output_name],
+        },
+    )
 
 
 class TestInputSpec:
@@ -76,41 +88,69 @@ class TestStageSpec:
         """Test valid stage with in/out bindings."""
         stage_data = {
             "name": "test_stage",
-            "runner": "codex",
+            "type": "ai",
+            "default_engine": "codex",
             "model": "medium",
             "effort": "middle",
+            "agent": make_agent(),
             "in": {"task": "input.task", "context": "context.shared"},
             "out": {"result": {"type": "string"}, "count": {"type": "int"}},
         }
         stage = StageSpec(**stage_data)
         assert stage.name == "test_stage"
-        assert stage.runner == "codex"
+        assert stage.default_engine == "codex"
         assert stage.in_.bindings == {"task": "input.task", "context": "context.shared"}
         assert len(stage.out.fields) == 2
 
     def test_stage_without_in(self):
         """Test stage can have no input bindings."""
-        stage = StageSpec(name="simple", runner="codex", model="medium", effort="middle", out={"result": {"type": "string"}})
+        stage = StageSpec(
+            name="simple",
+            type="ai",
+            default_engine="codex",
+            model="medium",
+            effort="middle",
+            agent=make_agent(),
+            out={"result": {"type": "string"}},
+        )
         assert stage.in_ is None or stage.in_.bindings == {}
 
     def test_stage_without_out(self):
         """Test stage must have out fields."""
         with pytest.raises(ValidationError) as exc_info:
-            StageSpec(name="bad", runner="codex", model="medium", effort="middle", **{"in": {"x": "input.y"}})  # type: ignore
+            StageSpec(
+                name="bad",
+                type="ai",
+                default_engine="codex",
+                model="medium",
+                effort="middle",
+                agent=make_agent(),
+                **{"in": {"x": "input.y"}},
+            )  # type: ignore
         assert "out" in str(exc_info.value).lower()
 
     def test_out_field_requires_type(self):
         """Test out fields require type specification."""
         with pytest.raises(ValidationError):
-            StageSpec(name="bad", runner="codex", model="medium", effort="middle", **{"out": {"field": {}}})  # type: ignore
+            StageSpec(
+                name="bad",
+                type="ai",
+                default_engine="codex",
+                model="medium",
+                effort="middle",
+                agent=make_agent(),
+                **{"out": {"field": {}}},
+            )  # type: ignore
 
     def test_valid_out_field_types(self):
         """Test valid out field type values."""
         stage = StageSpec(
             name="test",
-            runner="codex",
+            type="ai",
+            default_engine="codex",
             model="medium",
             effort="middle",
+            agent=make_agent("string_field"),
             out={
                 "string_field": {"type": "string"},
                 "int_field": {"type": "int"},
@@ -133,16 +173,20 @@ class TestProfileStages:
             },
             "stages": {
                 "developer": {
-                    "runner": "codex",
+                    "type": "ai",
+                    "default_engine": "codex",
                     "model": "medium",
                     "effort": "middle",
+                    "agent": make_agent("code"),
                     "in": {"task": "input.task"},
                     "out": {"code": {"type": "string"}},
                 },
                 "qa": {
-                    "runner": "claude",
+                    "type": "ai",
+                    "default_engine": "claude",
                     "model": "high",
                     "effort": "low",
+                    "agent": make_agent("approved"),
                     "out": {"approved": {"type": "bool"}},
                 },
             },
@@ -157,7 +201,14 @@ class TestProfileStages:
         """Test that inputs can be omitted."""
         data = {
             "stages": {
-                "dev": {"runner": "codex", "model": "medium", "effort": "middle", "out": {"x": {"type": "string"}}},
+                "dev": {
+                    "type": "ai",
+                    "default_engine": "codex",
+                    "model": "medium",
+                    "effort": "middle",
+                    "agent": make_agent("x"),
+                    "out": {"x": {"type": "string"}},
+                },
             },
         }
         stages = ProfileStages(**data)
@@ -167,7 +218,14 @@ class TestProfileStages:
         """Test stage names are valid identifiers."""
         data = {
             "stages": {
-                "invalid-stage-name": {"runner": "codex", "model": "medium", "effort": "middle", "out": {"x": {"type": "string"}}},
+                "invalid-stage-name": {
+                    "type": "ai",
+                    "default_engine": "codex",
+                    "model": "medium",
+                    "effort": "middle",
+                    "agent": make_agent("x"),
+                    "out": {"x": {"type": "string"}},
+                },
             },
         }
         with pytest.raises(ValidationError):

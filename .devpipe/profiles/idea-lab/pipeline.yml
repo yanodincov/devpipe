@@ -32,7 +32,8 @@ inputs:
 
 stages:
   intake:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1
@@ -55,7 +56,8 @@ stages:
         type: int
 
   expand:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1
@@ -81,7 +83,8 @@ stages:
         type: bool
 
   critique:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1
@@ -112,7 +115,8 @@ stages:
         type: bool
 
   refine:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1
@@ -135,7 +139,8 @@ stages:
         type: string
 
   finalize:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1

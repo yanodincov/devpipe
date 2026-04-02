@@ -32,6 +32,7 @@ VALID_INPUT_TYPES = {"string", "int", "bool", "object"}
 
 # Available runners
 AVAILABLE_RUNNERS = {"auto", "codex", "claude"}
+AVAILABLE_STAGE_TYPES = {"ai", "cmd"}
 
 # Available models per runner
 AVAILABLE_MODELS = {
@@ -347,54 +348,36 @@ def _validate_stages(stages: dict[str, Any], profile_dir: Path) -> tuple[list[Va
             ))
             continue
         
-        # Validate runner
-        runner = spec.get("runner")
-        if not runner:
+        stage_type = spec.get("type")
+        if stage_type is None:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.type",
+                message="type is required"
+            ))
+            continue
+        if not isinstance(stage_type, str):
+            errors.append(ValidationError(
+                path=f"{path_prefix}.type",
+                message="type must be a string"
+            ))
+            continue
+        if stage_type not in AVAILABLE_STAGE_TYPES:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.type",
+                message=f"Invalid type '{stage_type}'. Available types: {', '.join(sorted(AVAILABLE_STAGE_TYPES))}"
+            ))
+            continue
+
+        if "runner" in spec:
             errors.append(ValidationError(
                 path=f"{path_prefix}.runner",
-                message="runner is required"
+                message="runner is not allowed in stage schema, use default_engine for ai stages"
             ))
-        elif not isinstance(runner, str):
-            errors.append(ValidationError(
-                path=f"{path_prefix}.runner",
-                message="runner must be a string"
-            ))
-        elif runner not in AVAILABLE_RUNNERS:
-            errors.append(ValidationError(
-                path=f"{path_prefix}.runner",
-                message=f"Invalid runner '{runner}'. Available runners: {', '.join(sorted(AVAILABLE_RUNNERS))}"
-            ))
-        
-        # Validate model if present
-        model = spec.get("model")
-        if model is not None:
-            if not isinstance(model, str):
-                errors.append(ValidationError(
-                    path=f"{path_prefix}.model",
-                    message="model must be a string"
-                ))
-            elif model not in AVAILABLE_MODELS.get("auto", set()):
-                # Model availability depends on runner, but we validate against common set
-                all_models = set().union(*AVAILABLE_MODELS.values())
-                if model not in all_models:
-                    errors.append(ValidationError(
-                        path=f"{path_prefix}.model",
-                        message=f"Invalid model '{model}'. Available models: {', '.join(sorted(all_models))}"
-                    ))
-        
-        # Validate effort if present
-        effort = spec.get("effort")
-        if effort is not None:
-            if not isinstance(effort, str):
-                errors.append(ValidationError(
-                    path=f"{path_prefix}.effort",
-                    message="effort must be a string"
-                ))
-            elif effort not in AVAILABLE_EFFORTS:
-                errors.append(ValidationError(
-                    path=f"{path_prefix}.effort",
-                    message=f"Invalid effort '{effort}'. Available efforts: {', '.join(sorted(AVAILABLE_EFFORTS))}"
-                ))
+
+        if stage_type == "ai":
+            errors.extend(_validate_ai_stage(spec, path_prefix, profile_dir))
+        else:
+            errors.extend(_validate_cmd_stage(spec, path_prefix))
         
         # Validate retry_limit if present
         retry_limit = spec.get("retry_limit")
@@ -437,12 +420,159 @@ def _validate_stages(stages: dict[str, Any], profile_dir: Path) -> tuple[list[Va
             errors.extend(out_errors)
             warnings.extend(out_warnings)
         
-        # Validate agent
-        agent = spec.get("agent")
-        if agent is not None:
-            errors.extend(_validate_agent(agent, f"{path_prefix}.agent", profile_dir))
-    
     return errors, warnings
+
+
+def _validate_ai_stage(spec: dict[str, Any], path_prefix: str, profile_dir: Path) -> list[ValidationError]:
+    """Validate ai stage specific fields."""
+    errors: list[ValidationError] = []
+
+    default_engine = spec.get("default_engine")
+    if not default_engine:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.default_engine",
+            message="default_engine is required for ai stages"
+        ))
+    elif not isinstance(default_engine, str):
+        errors.append(ValidationError(
+            path=f"{path_prefix}.default_engine",
+            message="default_engine must be a string"
+        ))
+    elif default_engine not in AVAILABLE_RUNNERS - {"auto"}:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.default_engine",
+            message=f"Invalid default_engine '{default_engine}'. Available engines: {', '.join(sorted(AVAILABLE_RUNNERS - {'auto'}))}"
+        ))
+
+    model = spec.get("model")
+    if model is not None:
+        if not isinstance(model, str):
+            errors.append(ValidationError(
+                path=f"{path_prefix}.model",
+                message="model must be a string"
+            ))
+        else:
+            all_models = set().union(*AVAILABLE_MODELS.values())
+            if model not in all_models:
+                errors.append(ValidationError(
+                    path=f"{path_prefix}.model",
+                    message=f"Invalid model '{model}'. Available models: {', '.join(sorted(all_models))}"
+                ))
+
+    effort = spec.get("effort")
+    if effort is not None:
+        if not isinstance(effort, str):
+            errors.append(ValidationError(
+                path=f"{path_prefix}.effort",
+                message="effort must be a string"
+            ))
+        elif effort not in AVAILABLE_EFFORTS:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.effort",
+                message=f"Invalid effort '{effort}'. Available efforts: {', '.join(sorted(AVAILABLE_EFFORTS))}"
+            ))
+
+    if "command" in spec:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command",
+            message="command is not allowed for ai stages"
+        ))
+
+    agent = spec.get("agent")
+    if agent is None:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.agent",
+            message="agent is required for ai stages"
+        ))
+    else:
+        errors.extend(_validate_agent(agent, f"{path_prefix}.agent", profile_dir))
+
+    return errors
+
+
+def _validate_cmd_stage(spec: dict[str, Any], path_prefix: str) -> list[ValidationError]:
+    """Validate cmd stage specific fields."""
+    errors: list[ValidationError] = []
+
+    if "agent" in spec:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.agent",
+            message="agent is not allowed for cmd stages"
+        ))
+    for field_name in ("default_engine", "model", "effort"):
+        if field_name in spec:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.{field_name}",
+                message=f"{field_name} is not allowed for cmd stages"
+            ))
+
+    command = spec.get("command")
+    if command is None:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command",
+            message="command is required for cmd stages"
+        ))
+        return errors
+    if not isinstance(command, dict):
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command",
+            message="command must be a dictionary"
+        ))
+        return errors
+
+    exec_value = command.get("exec")
+    if not isinstance(exec_value, list) or not exec_value or not all(isinstance(part, str) and part for part in exec_value):
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command.exec",
+            message="exec must be a non-empty list of strings"
+        ))
+
+    parse_value = command.get("parse")
+    if parse_value is not None and parse_value not in {"text", "json"}:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command.parse",
+            message="parse must be 'text' or 'json'"
+        ))
+
+    result = command.get("result")
+    if result is None:
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command.result",
+            message="result is required"
+        ))
+    elif not isinstance(result, dict):
+        errors.append(ValidationError(
+            path=f"{path_prefix}.command.result",
+            message="result must be a dictionary"
+        ))
+    else:
+        mode = result.get("mode")
+        source = result.get("source")
+        if mode not in {"raw", "schema"}:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.command.result.mode",
+                message="mode must be 'raw' or 'schema'"
+            ))
+        if source not in {"stdout", "stderr"}:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.command.result.source",
+                message="source must be 'stdout' or 'stderr'"
+            ))
+
+    timeout = command.get("timeout")
+    if timeout is not None:
+        if isinstance(timeout, bool) or not isinstance(timeout, int):
+            errors.append(ValidationError(
+                path=f"{path_prefix}.command.timeout",
+                message="timeout must be an integer"
+            ))
+        elif timeout <= 0:
+            errors.append(ValidationError(
+                path=f"{path_prefix}.command.timeout",
+                message="timeout must be > 0"
+            ))
+
+    return errors
 
 
 def _validate_input_bindings(bindings: dict[str, str], path_prefix: str) -> list[ValidationError]:

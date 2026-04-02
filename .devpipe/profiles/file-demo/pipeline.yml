@@ -15,7 +15,8 @@ inputs:
 
 stages:
   write:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1
@@ -32,7 +33,8 @@ stages:
         type: string
 
   read:
-    runner: codex
+    type: ai
+    default_engine: codex
     model: low
     effort: low
     retry_limit: 1
