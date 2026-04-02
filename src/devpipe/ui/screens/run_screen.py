@@ -28,6 +28,8 @@ from devpipe.ui.widgets.status_bar import RunStatusBar
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 _COLLAPSE_LIMIT = 300
 _MESSAGE_TEXT_STYLE = "#f0ede6"
+_FORMAT_MAX_INDENT = 6  # at indent ≥ this, nested dicts/lists are rendered as raw JSON
+_FINAL_OUTPUT_KEY_STYLE = "#7aa2f7"  # blue highlight for final output keys
 
 
 def _humanize_key(key: str) -> str:
@@ -143,7 +145,7 @@ def _render_block_lines(value: Any) -> str:
     return "\n".join(lines)
 
 
-def _render_data_text(value: Any, indent: int = 0) -> Text:
+def _render_data_text(value: Any, indent: int = 0, key_style: str = "dim") -> Text:
     value = _unwrap_collection_wrapper(value)
     text = Text(style=_MESSAGE_TEXT_STYLE)
     prefix = " " * indent
@@ -161,10 +163,14 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
                 text.append("\n")
             first = False
             text.append(prefix)
-            text.append(_humanize_key(key), style="dim")
+            text.append(_humanize_key(key), style=key_style)
             if isinstance(nested, (dict, list)):
-                text.append("\n")
-                text.append(_render_data_text(nested, indent + 2))
+                if indent >= _FORMAT_MAX_INDENT:
+                    text.append(": ", style="dim")
+                    text.append(json.dumps(nested, ensure_ascii=False), style=_MESSAGE_TEXT_STYLE)
+                else:
+                    text.append("\n")
+                    text.append(_render_data_text(nested, indent + 2, key_style))
             else:
                 text.append(": ", style="dim")
                 _append_styled_value(text, nested)
@@ -178,10 +184,13 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
                 text.append("\n")
             text.append(f"{prefix}• ", style="dim")
             if isinstance(item, (dict, list)):
-                nested = _render_data_text(item, indent + 2)
-                if nested.plain.startswith(" " * (indent + 2)):
-                    nested = Text(nested.plain[indent + 2 :], style=nested.style)
-                text.append(nested)
+                if indent >= _FORMAT_MAX_INDENT:
+                    text.append(json.dumps(item, ensure_ascii=False), style=_MESSAGE_TEXT_STYLE)
+                else:
+                    nested = _render_data_text(item, indent + 2, key_style)
+                    if nested.plain.startswith(" " * (indent + 2)):
+                        nested = Text(nested.plain[indent + 2 :], style=nested.style)
+                    text.append(nested)
             else:
                 _append_styled_value(text, item)
         return text
@@ -193,17 +202,18 @@ def _render_data_text(value: Any, indent: int = 0) -> Text:
 def _render_block_text(value: Any) -> Text:
     kind, primary, rest = _message_kind(value)
     text = Text(style=_MESSAGE_TEXT_STYLE)
+    key_style = _FINAL_OUTPUT_KEY_STYLE if kind == "final output" else "dim"
     if kind == "prompt" and isinstance(primary, str):
         prompt_text = primary
         if prompt_text.startswith("Role: "):
             prompt_text = "Agent: " + prompt_text[len("Role: ") :]
         text.append(prompt_text)
     elif primary not in (None, "", [], {}):
-        text.append(_render_data_text(primary, indent=2))
+        text.append(_render_data_text(primary, indent=2, key_style=key_style))
     if rest:
         if primary not in (None, "", [], {}):
             text.append("\n")
-        text.append(_render_data_text(rest, indent=2))
+        text.append(_render_data_text(rest, indent=2, key_style=key_style))
     return text
 
 
@@ -227,10 +237,11 @@ def _render_collapsed_message_panel(value: Any, limit: int = _COLLAPSE_LIMIT) ->
     title = Text(kind, style="#6b7280")
     plain = _render_block_text(value).plain
     collapsed = plain[:limit].rstrip()
+    text = Text(collapsed, style=_MESSAGE_TEXT_STYLE)
     if len(plain) > limit:
-        collapsed += f" {len(plain) - len(collapsed)} symbols more ..."
+        text.append(f"  {len(plain) - len(collapsed)} symbols more ...", style="dim italic #6b7280")
     return Panel(
-        Text(collapsed, style=_MESSAGE_TEXT_STYLE),
+        text,
         title=title,
         title_align="left",
         subtitle=Text("[click to expand]", style="dim"),
@@ -477,10 +488,8 @@ class LogScroll(VerticalScroll, can_focus=False):
     def on_mouse_scroll_up(self, event: events.MouseScrollUp) -> None:
         if self.parent is not None:
             self.parent.pause_follow()  # type: ignore[union-attr]
-        super().on_mouse_scroll_up(event)
 
     def on_mouse_scroll_down(self, event: events.MouseScrollDown) -> None:
-        super().on_mouse_scroll_down(event)
         if self.parent is not None:
             if self.is_vertical_scroll_end:
                 self.parent.resume_follow()  # type: ignore[union-attr]
